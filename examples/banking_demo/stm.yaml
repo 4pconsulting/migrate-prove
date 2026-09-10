@@ -1,0 +1,109 @@
+version: 1
+name: banking-core-migration
+
+entities:
+  - name: customers
+    source_table: Customer
+    target_table: customers
+    business_key: [customer_id]
+    risk: critical
+    failure_probes:
+      - truncation
+      - precision
+      - leading_zeros
+      - charset
+      - null_empty_literal
+    volume_slices:
+      - [status]
+    mappings:
+      - source: CustID
+        target: customer_id
+        kind: direct
+        nullable: false
+        normalize: { trim: true, upper: true }
+      - source: Name
+        target: customer_name
+        kind: direct
+        max_length: 40
+        normalize: { trim: true }
+      - source: Status
+        target: status
+        kind: transform
+        lookup:
+          A: Active
+          S: Suspended
+          C: Closed
+        normalize: { trim: true, upper: false }
+      - source: DateOfBirth
+        target: date_of_birth
+        kind: direct
+        normalize: { trim: true }
+      - source: Balance
+        target: current_balance
+        kind: coerce
+        normalize: { decimal_places: 4 }
+      - source: CreatedAt
+        target: created_at
+        kind: direct
+      - source: UpdatedAt
+        target: updated_at
+        kind: direct
+      - source: Postcode
+        target: postcode
+        kind: direct
+        normalize: { trim: true }
+      - source: CreditScore
+        target: risk_tier
+        kind: transform
+        rules:
+          - when: "credit_score >= 750 and default_history == 0"
+            then: "LOW"
+          - when: "credit_score >= 600"
+            then: "MEDIUM"
+          - else: "HIGH"
+    metrics:
+      - name: total_balance
+        source_sql: SUM(Balance)
+        target_sql: SUM(current_balance)
+        tolerance_abs: 0.0001
+      - name: account_count
+        source_sql: COUNT(*)
+        target_sql: COUNT(*)
+      - name: balance_by_status
+        source_sql: SUM(Balance)
+        target_sql: SUM(current_balance)
+        group_by: [status]
+        tolerance_abs: 0.01
+    invariants:
+      - name: temporal_integrity
+        kind: temporal
+        columns: [created_at, updated_at]
+        expect: 0
+    sample:
+      strategy: full
+
+  - name: order_items
+    source_table: OrderItem
+    target_table: order_items
+    business_key: [item_id]
+    source_key: [ItemID]
+    risk: master
+    mappings:
+      - source: ItemID
+        target: item_id
+        kind: direct
+      - source: OrderID
+        target: order_id
+        kind: direct
+      - source: Amount
+        target: amount
+        kind: direct
+        normalize: { decimal_places: 2 }
+    invariants:
+      - name: no_orphan_items
+        kind: orphans
+        child_table: order_items
+        child_key: order_id
+        parent_table: orders
+        parent_key: order_id
+        expect: 0

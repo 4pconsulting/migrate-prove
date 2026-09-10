@@ -1,0 +1,9 @@
+name: banking-cutover-rehearsal
+contract: stm.yaml
+source:
+  url: sqlite:///source.db
+target:
+  url: sqlite:///target.db
+output_dir: artifacts
+continue_on_fail: true
+levels: ["1", "probes", "2", "3", "4", "hash", "5"]

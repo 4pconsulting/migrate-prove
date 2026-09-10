@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "migrate-prove"
+version = "0.1.0"
+description = "Prove that migrated target data matches the Source-to-Target Mapping contract — not just that the ETL job exited 0."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "migrate-prove" }]
+keywords = ["data-migration", "etl", "reconciliation", "qa", "validation"]
+dependencies = [
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "sqlalchemy>=2.0",
+  "typer>=0.12",
+  "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+excel = ["openpyxl>=3.1"]
+
+[project.scripts]
+migrate-prove = "migrate_prove.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
