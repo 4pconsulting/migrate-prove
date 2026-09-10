@@ -9,17 +9,9 @@ from migrate_prove.contract import load_contract, load_suite
 from migrate_prove.demo.banking import seed_banking
 from migrate_prove.engine import ValidationEngine
 from migrate_prove.reporting import print_console, write_html, write_json
+from migrate_prove.secrets import MissingEnvError, load_env, redact_url, resolve_connection
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Prove migrated data against an STM contract.")
-
-
-def _resolve_url(raw: str, base: Path) -> str:
-    if raw.startswith("sqlite:///"):
-        rest = raw.removeprefix("sqlite:///")
-        if rest.startswith("/") or (len(rest) > 1 and rest[1] == ":"):
-            return raw
-        return "sqlite:///" + (base / rest).resolve().as_posix()
-    return raw
 
 
 @app.command()
@@ -37,13 +29,31 @@ def compile(
 def run(
     suite: Path = typer.Argument(..., exists=True, help="Suite YAML (connections + contract path)"),
     entity: list[str] = typer.Option(None, "--entity", "-e", help="Limit to named entities"),
+    env_file: Path | None = typer.Option(
+        None,
+        "--env-file",
+        help="Optional .env path (default: discover .env from the working directory)",
+        exists=True,
+        dir_okay=False,
+    ),
 ) -> None:
     """Run the multi-tier validation pipeline and write an evidence scorecard."""
+    load_env(env_file)
     config = load_suite(suite)
     base = suite.parent
     contract = load_contract((base / config.contract).resolve())
-    source = SqlAlchemyConnector(_resolve_url(config.source["url"], base), name="source")
-    target = SqlAlchemyConnector(_resolve_url(config.target["url"], base), name="target")
+    try:
+        source_url = resolve_connection(config.source, base)
+        target_url = resolve_connection(config.target, base)
+    except MissingEnvError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(f"source: {redact_url(source_url)}")
+    typer.echo(f"target: {redact_url(target_url)}")
+
+    source = SqlAlchemyConnector(source_url, name="source")
+    target = SqlAlchemyConnector(target_url, name="target")
     engine = ValidationEngine(source, target)
     report = engine.run(
         contract,

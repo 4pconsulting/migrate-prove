@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class RiskLevel(str, Enum):
@@ -171,11 +171,45 @@ class CheckResult(BaseModel):
     duration_ms: float = 0.0
 
 
+class ConnectionConfig(BaseModel):
+    """Suite connection: either a full SQLAlchemy `url`, or structured dialect fields.
+
+    Secrets belong in the environment (or a local `.env`), referenced as `${VAR}`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str | None = None
+    dialect: str | None = None
+    host: str | None = None
+    port: int | str | None = None
+    database: str | None = None
+    username: str | None = None
+    password: str | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def url_xor_structured(self) -> ConnectionConfig:
+        has_url = self.url is not None
+        has_structured = any(
+            value is not None
+            for value in (self.dialect, self.host, self.database, self.username, self.password)
+        ) or bool(self.options) or self.port is not None
+        if has_url and has_structured:
+            raise ValueError("Connection must use either `url` or structured fields, not both")
+        if not has_url and not (self.dialect and self.host and self.database):
+            raise ValueError(
+                "Connection requires `url` or structured dialect/host/database "
+                "(username/password usually come from ${ENV} refs)"
+            )
+        return self
+
+
 class SuiteConfig(BaseModel):
     name: str
     contract: str
-    source: dict[str, Any]
-    target: dict[str, Any]
+    source: ConnectionConfig
+    target: ConnectionConfig
     output_dir: str = "artifacts"
     continue_on_fail: bool = True
     levels: list[str] = Field(

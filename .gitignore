@@ -20,3 +20,8 @@ examples/**/artifacts/
 Thumbs.db
 .idea/
 .vscode/
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example

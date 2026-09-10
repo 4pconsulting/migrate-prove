@@ -71,7 +71,6 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
-python -m pip install -e ".[dev]"
 migrate-prove seed-demo examples/banking_demo
 migrate-prove compile examples/banking_demo/stm.yaml
 migrate-prove run examples/banking_demo/suite.yaml
@@ -83,15 +82,58 @@ Open `examples/banking_demo/artifacts/report.html`. You should see a **passing t
 pytest
 ```
 
+## Connections and secrets
+
+Suite YAML must **never** contain passwords. Reference environment variables with `${VAR}` or `${VAR:-default}`. Locally, copy [`.env.example`](.env.example) to `.env` (gitignored). In CI, set the same names from the pipeline secrets store — `python-dotenv` only fills gaps; real process env always wins.
+
+**URL form** (any SQLAlchemy URL after expansion):
+
+```yaml
+source:
+  url: "postgresql+psycopg://${SOURCE_USER}:${SOURCE_PASSWORD}@${SOURCE_HOST}:${SOURCE_PORT:-5432}/${SOURCE_DB}"
+target:
+  url: "${TARGET_URL}"
+```
+
+**Structured form** (builds the URL; same `${}` rules):
+
+```yaml
+source:
+  dialect: postgresql+psycopg
+  host: ${SOURCE_HOST}
+  port: ${SOURCE_PORT:-5432}
+  database: ${SOURCE_DB}
+  username: ${SOURCE_USER}
+  password: ${SOURCE_PASSWORD}
+  options:
+    sslmode: require
+```
+
+Install drivers as extras when needed:
+
+```powershell
+pip install -e ".[postgres]"   # psycopg
+pip install -e ".[athena]"     # PyAthena SQLAlchemy dialect
+```
+
+Athena stays URL-shaped; AWS credentials come from the environment or the runner IAM role:
+
+```yaml
+target:
+  url: "awsathena+rest://athena.${AWS_REGION}.amazonaws.com:443/${ATHENA_SCHEMA}?s3_staging_dir=${ATHENA_S3_STAGING}&work_group=${ATHENA_WORKGROUP}"
+```
+
+Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints **redacted** connection URLs only.
+
 ## Authoring a contract
 
-See `examples/banking_demo/stm.yaml`. A suite file points at the contract and the two connection URLs:
+See `examples/banking_demo/stm.yaml`. A suite file points at the contract and the two connections (SQLite needs no secrets):
 
 ```yaml
 name: my-cutover
 contract: stm.yaml
-source: { url: sqlite:///source.db }   # any SQLAlchemy URL
-target: { url: postgresql+psycopg://... }
+source: { url: sqlite:///source.db }
+target: { url: "${TARGET_URL}" }
 output_dir: artifacts
 ```
 
@@ -99,7 +141,7 @@ Transform rules are the oracle, not a second copy of ETL Python. Keep ETL and th
 
 ## Roadmap (v1 is the skeleton that already fails the right way)
 
-1. **Now** — STM YAML, SQLAlchemy connectors, L1–L5, hashing, probes, CLI, HTML/JSON, SQLite demo.
+1. **Now** — STM YAML, SQLAlchemy connectors, env-backed secrets, L1–L5, hashing, probes, CLI, HTML/JSON, SQLite demo.
 2. **Excel STM import** — optional extra `openpyxl` to ingest the spreadsheet everyone still has.
 3. **Dialect hash pushdown** — `SHA2` / `sha256` in Postgres, SQL Server, Snowflake so row signatures never leave the estate.
 4. **Stratified sampling at warehouse scale** — deterministic modulus on business keys, 100% for HNW / recent / edge strata.
@@ -112,3 +154,4 @@ Transform rules are the oracle, not a second copy of ETL Python. Keep ETL and th
 - Prefer evidence over exit codes.
 - Hunt known failure modes on purpose; do not only sample happy-path rows.
 - Never claim success from a global row count.
+- Never commit secrets; suite YAML references `${ENV}` only.
