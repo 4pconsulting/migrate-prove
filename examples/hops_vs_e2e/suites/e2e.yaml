@@ -1,0 +1,9 @@
+name: e2e-legacy-to-mart
+contract: ../contracts/e2e_legacy_to_mart.yaml
+source:
+  url: sqlite:///../pipeline.db
+target:
+  url: sqlite:///../pipeline.db
+output_dir: ../artifacts/e2e
+continue_on_fail: true
+levels: ["1", "2", "3", "4", "hash"]

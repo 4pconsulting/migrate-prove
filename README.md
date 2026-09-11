@@ -78,6 +78,19 @@ migrate-prove run examples/banking_demo/suite.yaml
 
 Open `examples/banking_demo/artifacts/report.html`. You should see a **passing total count** and failing sliced volume, transforms, hashes, probes, and invariants — that is the point.
 
+### Hops vs end-to-end
+
+Layered pipelines need both thin hop gates and a finalised source → target STM. Runnable demo (hops pass; e2e fails on status misclassification):
+
+```powershell
+migrate-prove seed-hops-demo examples/hops_vs_e2e
+migrate-prove run examples/hops_vs_e2e/suites/hop_01.yaml
+migrate-prove run examples/hops_vs_e2e/suites/hop_02.yaml
+migrate-prove run examples/hops_vs_e2e/suites/e2e.yaml
+```
+
+See [examples/hops_vs_e2e/README.md](examples/hops_vs_e2e/README.md) and [ASSURANCE.md](ASSURANCE.md).
+
 ```powershell
 pytest
 ```

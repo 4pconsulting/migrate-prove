@@ -1,0 +1,10 @@
+name: hop-02-staging-to-mart
+contract: ../contracts/hop_02_staging_to_mart.yaml
+source:
+  url: sqlite:///../pipeline.db
+target:
+  url: sqlite:///../pipeline.db
+output_dir: ../artifacts/hop_02
+continue_on_fail: true
+# Thin gate: schema + totals only — mirrors hop-only "validation" that misses business mapping.
+levels: ["1", "2"]

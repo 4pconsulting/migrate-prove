@@ -7,6 +7,7 @@ import typer
 from migrate_prove.connectors import SqlAlchemyConnector
 from migrate_prove.contract import load_contract, load_suite
 from migrate_prove.demo.banking import seed_banking
+from migrate_prove.demo.hops_vs_e2e import seed_hops_vs_e2e
 from migrate_prove.engine import ValidationEngine
 from migrate_prove.reporting import print_console, write_html, write_json
 from migrate_prove.secrets import MissingEnvError, load_env, redact_url, resolve_connection
@@ -81,3 +82,16 @@ def seed_demo(
     folder.mkdir(parents=True, exist_ok=True)
     source_path, target_path = seed_banking(folder)
     typer.echo(f"Seeded {source_path} and {target_path}")
+
+
+@app.command("seed-hops-demo")
+def seed_hops_demo(
+    folder: Path = typer.Argument(
+        Path("examples/hops_vs_e2e"),
+        help="Directory that will receive pipeline.db (legacy / staging / mart)",
+    ),
+) -> None:
+    """Load the hops-vs-e2e demo: thin hops pass; end-to-end status slice fails."""
+    folder.mkdir(parents=True, exist_ok=True)
+    db_path = seed_hops_vs_e2e(folder)
+    typer.echo(f"Seeded {db_path}")

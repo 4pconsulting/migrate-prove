@@ -1,0 +1,9 @@
+name: hop-01-legacy-to-staging
+contract: ../contracts/hop_01_legacy_to_staging.yaml
+source:
+  url: sqlite:///../pipeline.db
+target:
+  url: sqlite:///../pipeline.db
+output_dir: ../artifacts/hop_01
+continue_on_fail: true
+levels: ["1", "2", "4", "hash"]

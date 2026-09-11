@@ -1,0 +1,28 @@
+version: 1
+name: hop-01-legacy-to-staging
+
+entities:
+  - name: customers
+    source_table: legacy_customer
+    target_table: staging_customer
+    business_key: [cust_id]
+    risk: master
+    mappings:
+      - source: CustID
+        target: cust_id
+        kind: direct
+        normalize: { trim: true, upper: true }
+      - source: Name
+        target: name
+        kind: direct
+        normalize: { trim: true }
+      - source: Status
+        target: status
+        kind: direct
+        normalize: { trim: true }
+      - source: Balance
+        target: balance
+        kind: coerce
+        normalize: { decimal_places: 2 }
+    sample:
+      strategy: full

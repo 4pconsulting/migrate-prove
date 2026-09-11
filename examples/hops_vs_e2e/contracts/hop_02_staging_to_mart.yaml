@@ -1,0 +1,19 @@
+version: 1
+name: hop-02-staging-to-mart
+
+# Intentionally thin: schema + total volume only.
+# No status lookup, no volume_slices — so a Closed→Active bug in mart stays invisible.
+entities:
+  - name: customers
+    source_table: staging_customer
+    target_table: mart_customer
+    business_key: [customer_id]
+    source_key: [cust_id]
+    risk: master
+    mappings:
+      - source: cust_id
+        target: customer_id
+        kind: direct
+        normalize: { trim: true, upper: true }
+    sample:
+      strategy: full
