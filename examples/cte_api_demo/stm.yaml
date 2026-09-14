@@ -1,0 +1,78 @@
+version: 1
+name: cte-salesforce-account-migration
+
+entities:
+  - name: accounts
+    # Logical source row = Customer ⨝ AccountBalance (not a physical table).
+    source_sql: |
+      WITH cust AS (
+        SELECT CustID, Name, Status, CreatedAt, UpdatedAt
+        FROM Customer
+      ),
+      bal AS (
+        SELECT CustID, Balance
+        FROM AccountBalance
+      )
+      SELECT
+        c.CustID,
+        c.Name,
+        c.Status,
+        b.Balance,
+        c.CreatedAt,
+        c.UpdatedAt
+      FROM cust c
+      INNER JOIN bal b ON b.CustID = c.CustID
+    target_table: Account
+    business_key: [External_Id__c]
+    source_key: [CustID]
+    risk: critical
+    volume_slices:
+      - [Status__c]
+    mappings:
+      - source: CustID
+        target: External_Id__c
+        kind: direct
+        nullable: false
+        normalize: { trim: true, upper: true }
+      - source: Name
+        target: Name
+        kind: direct
+        nullable: false
+        normalize: { trim: true }
+      - source: Status
+        target: Status__c
+        kind: transform
+        lookup:
+          A: Active
+          S: Suspended
+          C: Closed
+        normalize: { trim: true }
+      - source: Balance
+        target: Current_Balance__c
+        kind: coerce
+        normalize: { decimal_places: 2 }
+      - source: CreatedAt
+        target: CreatedDate
+        kind: direct
+        in_hash: false
+      - source: UpdatedAt
+        target: Updated_At__c
+        kind: direct
+        in_hash: false
+    metrics:
+      - name: total_balance
+        source_sql: SUM(Balance)
+        target_sql: SUM(Current_Balance__c)
+        tolerance_abs: 0.01
+      - name: account_count
+        source_sql: COUNT(*)
+        target_sql: COUNT(*)
+      - name: balance_by_status
+        source_sql: SUM(Balance)
+        target_sql: SUM(Current_Balance__c)
+        group_by: [Status__c]
+        tolerance_abs: 0.01
+    invariants:
+      - name: temporal_integrity
+        kind: temporal
+        columns: [CreatedDate, Updated_At__c]

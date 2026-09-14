@@ -1,0 +1,85 @@
+{
+  "totalSize": 12,
+  "done": false,
+  "nextRecordsUrl": "/services/data/v59.0/query/Account-page2",
+  "records": [
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000001AAA"
+      },
+      "Id": "001000000000001AAA",
+      "External_Id__c": "C001",
+      "Name": "Ada Lovelace",
+      "Status__c": "Active",
+      "Current_Balance__c": 1200.5,
+      "CreatedDate": "2020-01-01T10:00:00.000+0000",
+      "Updated_At__c": "2020-06-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000002AAA"
+      },
+      "Id": "001000000000002AAA",
+      "External_Id__c": "C002",
+      "Name": "Alan Turing",
+      "Status__c": "Active",
+      "Current_Balance__c": 980.0,
+      "CreatedDate": "2020-02-01T10:00:00.000+0000",
+      "Updated_At__c": "2021-01-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000003AAA"
+      },
+      "Id": "001000000000003AAA",
+      "External_Id__c": "C003",
+      "Name": "Grace Hopper",
+      "Status__c": "Active",
+      "Current_Balance__c": 1500.25,
+      "CreatedDate": "2019-03-01T10:00:00.000+0000",
+      "Updated_At__c": "2019-09-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000004AAA"
+      },
+      "Id": "001000000000004AAA",
+      "External_Id__c": "C004",
+      "Name": "Katherine Johnson",
+      "Status__c": "Active",
+      "Current_Balance__c": 2100.0,
+      "CreatedDate": "2021-04-01T10:00:00.000+0000",
+      "Updated_At__c": "2022-01-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000005AAA"
+      },
+      "Id": "001000000000005AAA",
+      "External_Id__c": "C005",
+      "Name": "Dorothy Vaughan",
+      "Status__c": "Active",
+      "Current_Balance__c": 250.0,
+      "CreatedDate": "2018-01-01T10:00:00.000+0000",
+      "Updated_At__c": "2023-01-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000006AAA"
+      },
+      "Id": "001000000000006AAA",
+      "External_Id__c": "C006",
+      "Name": "Margaret Hamilton",
+      "Status__c": "Suspended",
+      "Current_Balance__c": 340.1,
+      "CreatedDate": "2022-05-01T10:00:00.000+0000",
+      "Updated_At__c": "2022-08-01T10:00:00.000+0000"
+    }
+  ]
+}

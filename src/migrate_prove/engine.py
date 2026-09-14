@@ -15,6 +15,7 @@ from migrate_prove.checks import (
 )
 from migrate_prove.connectors import Connector
 from migrate_prove.models import CheckResult, CheckStatus, Contract, Entity, RiskLevel
+from migrate_prove.sql import source_relation, target_relation
 
 
 LEVEL_ORDER = ["1", "probes", "2", "3", "4", "hash", "5"]
@@ -113,8 +114,8 @@ class ValidationEngine:
         source_info = None
         target_info = None
         try:
-            source_info = self.source.inspect_table(entity.source_table, entity.source_schema)
-            target_info = self.target.inspect_table(entity.target_table, entity.target_schema)
+            source_info = self.source.inspect_relation(source_relation(entity))
+            target_info = self.target.inspect_relation(target_relation(entity))
         except Exception:
             source_info = target_info = None
 

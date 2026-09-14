@@ -111,7 +111,8 @@ class Invariant(BaseModel):
 
 class Entity(BaseModel):
     name: str
-    source_table: str
+    source_table: str | None = None
+    source_sql: str | None = None
     target_table: str
     source_schema: str | None = None
     target_schema: str | None = None
@@ -126,6 +127,16 @@ class Entity(BaseModel):
     filter_source: str | None = None
     filter_target: str | None = None
     failure_probes: list[str] = []
+
+    @model_validator(mode="after")
+    def source_table_xor_sql(self) -> Entity:
+        has_table = self.source_table is not None
+        has_sql = self.source_sql is not None
+        if has_table == has_sql:
+            raise ValueError(
+                f"Entity {self.name}: provide exactly one of source_table or source_sql"
+            )
+        return self
 
     def mapping_for_target(self, target: str) -> Mapping | None:
         for mapping in self.mappings:
@@ -172,13 +183,14 @@ class CheckResult(BaseModel):
 
 
 class ConnectionConfig(BaseModel):
-    """Suite connection: either a full SQLAlchemy `url`, or structured dialect fields.
+    """Suite connection: SQLAlchemy URL/structured fields, or an API mock fixture path.
 
     Secrets belong in the environment (or a local `.env`), referenced as `${VAR}`.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    kind: Literal["sqlalchemy", "salesforce_mock"] = "sqlalchemy"
     url: str | None = None
     dialect: str | None = None
     host: str | None = None
@@ -187,14 +199,30 @@ class ConnectionConfig(BaseModel):
     username: str | None = None
     password: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+    fixtures: str | None = None
 
     @model_validator(mode="after")
-    def url_xor_structured(self) -> ConnectionConfig:
+    def connection_shape(self) -> ConnectionConfig:
+        if self.kind == "salesforce_mock":
+            if not self.fixtures:
+                raise ValueError("salesforce_mock connections require `fixtures`")
+            if self.url is not None or any(
+                value is not None
+                for value in (self.dialect, self.host, self.database, self.username, self.password)
+            ) or bool(self.options) or self.port is not None:
+                raise ValueError(
+                    "salesforce_mock connections use `fixtures` only "
+                    "(no url / structured SQLAlchemy fields)"
+                )
+            return self
+
         has_url = self.url is not None
         has_structured = any(
             value is not None
             for value in (self.dialect, self.host, self.database, self.username, self.password)
         ) or bool(self.options) or self.port is not None
+        if self.fixtures is not None:
+            raise ValueError("sqlalchemy connections do not use `fixtures`")
         if has_url and has_structured:
             raise ValueError("Connection must use either `url` or structured fields, not both")
         if not has_url and not (self.dialect and self.host and self.database):

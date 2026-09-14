@@ -1,0 +1,10 @@
+name: cte-api-cutover
+contract: stm.yaml
+source:
+  url: sqlite:///source.db
+target:
+  kind: salesforce_mock
+  fixtures: fixtures/salesforce
+output_dir: artifacts
+continue_on_fail: true
+levels: ["1", "2", "3", "4", "5", "hash"]

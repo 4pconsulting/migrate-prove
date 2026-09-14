@@ -4,7 +4,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any
 
-from migrate_prove.connectors import Connector, TableInfo
+from migrate_prove.connectors import Connector, RelationRef, TableInfo
 from migrate_prove.hashing import row_signature
 from migrate_prove.models import (
     CheckResult,
@@ -15,7 +15,7 @@ from migrate_prove.models import (
 )
 from migrate_prove.normalize import canonicalize
 from migrate_prove.rules import apply_mapping
-from migrate_prove.sql import group_count_sql, mapped_dimension_sql, where_clause
+from migrate_prove.sql import mapped_dimension_sql, source_relation, target_relation
 
 
 def _slice_label(key: tuple) -> str:
@@ -51,16 +51,6 @@ def _ok(
     )
 
 
-def _fetch(
-    connector: Connector,
-    table: str,
-    schema: str | None,
-    extra_where: str | None = None,
-) -> list[dict[str, Any]]:
-    sql = f"SELECT * FROM {connector.qualified(table, schema)}{where_clause(extra_where)}"
-    return connector.query(sql)
-
-
 def _index_by_key(rows: list[dict[str, Any]], columns: list[str]) -> dict[tuple, dict[str, Any]]:
     indexed: dict[tuple, dict[str, Any]] = {}
     for row in rows:
@@ -77,11 +67,15 @@ def _within_tolerance(expected: float, actual: float, abs_tol: float, pct_tol: f
     return False
 
 
+def _is_api_dialect(connector: Connector) -> bool:
+    return connector.dialect_name() == "salesforce"
+
+
 def check_schema(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
     results: list[CheckResult] = []
     try:
-        source_info = source.inspect_table(entity.source_table, entity.source_schema)
-        target_info = target.inspect_table(entity.target_table, entity.target_schema)
+        source_info = source.inspect_relation(source_relation(entity))
+        target_info = target.inspect_relation(target_relation(entity))
     except Exception as exc:
         return [
             _ok(
@@ -146,16 +140,10 @@ def check_schema(entity: Entity, source: Connector, target: Connector) -> list[C
 
 
 def check_volume(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
-    source_sql = (
-        f"SELECT COUNT(*) FROM {source.qualified(entity.source_table, entity.source_schema)}"
-        f"{where_clause(entity.filter_source)}"
-    )
-    target_sql = (
-        f"SELECT COUNT(*) FROM {target.qualified(entity.target_table, entity.target_schema)}"
-        f"{where_clause(entity.filter_target)}"
-    )
-    source_count = int(source.scalar(source_sql) or 0)
-    target_count = int(target.scalar(target_sql) or 0)
+    src = source_relation(entity)
+    tgt = target_relation(entity)
+    source_count = source.count_rows(src, entity.filter_source)
+    target_count = target.count_rows(tgt, entity.filter_target)
     results = [
         _ok(
             id=f"L2.{entity.name}.volume.total",
@@ -179,25 +167,11 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
         source_dim_sql = {
             dim: mapped_dimension_sql(source, entity, dim) for dim in dimensions
         }
-        source_groups = source.query(
-            group_count_sql(
-                source,
-                entity.source_table,
-                entity.source_schema,
-                dimensions,
-                entity.filter_source,
-                source_dim_sql,
-            )
+        # API targets cannot evaluate SQL CASE lookups; group on projected field names.
+        source_groups = source.group_count(
+            src, dimensions, entity.filter_source, source_dim_sql
         )
-        target_groups = target.query(
-            group_count_sql(
-                target,
-                entity.target_table,
-                entity.target_schema,
-                dimensions,
-                entity.filter_target,
-            )
-        )
+        target_groups = target.group_count(tgt, dimensions, entity.filter_target)
         source_map = {
             tuple(row[dim] for dim in dimensions): int(row["row_count"]) for row in source_groups
         }
@@ -245,34 +219,33 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
 
 def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
     results: list[CheckResult] = []
-    source_from = source.qualified(entity.source_table, entity.source_schema)
-    target_from = target.qualified(entity.target_table, entity.target_schema)
+    src = source_relation(entity)
+    tgt = target_relation(entity)
     for metric in entity.metrics:
         if metric.group_by:
             source_dim_sql = {
                 dim: mapped_dimension_sql(source, entity, dim) for dim in metric.group_by
             }
-            source_selects = [
-                f"{source_dim_sql[dim]} AS {source.quote(dim)}" for dim in metric.group_by
-            ]
-            target_selects = [target.quote(dim) for dim in metric.group_by]
-            source_sql = (
-                f"SELECT {', '.join(source_selects)}, {metric.source_sql} AS metric "
-                f"FROM {source_from}{where_clause(entity.filter_source)} "
-                f"GROUP BY {', '.join(str(i) for i in range(1, len(metric.group_by) + 1))}"
-            )
-            target_sql = (
-                f"SELECT {', '.join(target_selects)}, {metric.target_sql} AS metric "
-                f"FROM {target_from}{where_clause(entity.filter_target)} "
-                f"GROUP BY {', '.join(target_selects)}"
-            )
             source_rows = {
                 tuple(row[dim] for dim in metric.group_by): float(row["metric"] or 0)
-                for row in source.query(source_sql)
+                for row in source.aggregate_grouped(
+                    src,
+                    metric.source_sql,
+                    metric.group_by,
+                    entity.filter_source,
+                    source_dim_sql,
+                )
             }
+            target_dim_sql = None if _is_api_dialect(target) else None
             target_rows = {
                 tuple(row[dim] for dim in metric.group_by): float(row["metric"] or 0)
-                for row in target.query(target_sql)
+                for row in target.aggregate_grouped(
+                    tgt,
+                    metric.target_sql,
+                    metric.group_by,
+                    entity.filter_target,
+                    target_dim_sql,
+                )
             }
             keys = sorted(set(source_rows) | set(target_rows), key=str)
             failed = False
@@ -305,12 +278,8 @@ def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[
             )
             continue
 
-        source_value = source.scalar(
-            f"SELECT {metric.source_sql} FROM {source_from}{where_clause(entity.filter_source)}"
-        )
-        target_value = target.scalar(
-            f"SELECT {metric.target_sql} FROM {target_from}{where_clause(entity.filter_target)}"
-        )
+        source_value = source.aggregate(src, metric.source_sql, entity.filter_source)
+        target_value = target.aggregate(tgt, metric.target_sql, entity.filter_target)
         expected = float(source_value or 0)
         actual = float(target_value or 0)
         ok = _within_tolerance(expected, actual, metric.tolerance_abs, metric.tolerance_pct)
@@ -341,9 +310,9 @@ def _expected_row(source_row: dict[str, Any], entity: Entity) -> dict[str, Any]:
 
 
 def check_transforms(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
-    source_rows = _fetch(source, entity.source_table, entity.source_schema, entity.filter_source)
+    source_rows = source.fetch_rows(source_relation(entity), entity.filter_source)
     target_rows = _index_by_key(
-        _fetch(target, entity.target_table, entity.target_schema, entity.filter_target),
+        target.fetch_rows(target_relation(entity), entity.filter_target),
         entity.business_key,
     )
     mismatches: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -406,9 +375,9 @@ def check_transforms(entity: Entity, source: Connector, target: Connector) -> li
 
 def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
     hash_fields = [m for m in entity.mappings if m.in_hash and m.kind != MappingKind.surrogate]
-    source_rows = _fetch(source, entity.source_table, entity.source_schema, entity.filter_source)
+    source_rows = source.fetch_rows(source_relation(entity), entity.filter_source)
     target_rows = _index_by_key(
-        _fetch(target, entity.target_table, entity.target_schema, entity.filter_target),
+        target.fetch_rows(target_relation(entity), entity.filter_target),
         entity.business_key,
     )
     source_keys = set()
@@ -487,25 +456,63 @@ def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> li
     ]
 
 
-def _temporal_sql(connector: Connector, entity: Entity, columns: list[str]) -> str:
+def _temporal_count_sql(connector: Connector, ref: RelationRef, columns: list[str], extra_where: str | None) -> str:
+    from migrate_prove.connectors import where_clause
+
     comparisons = []
     for left, right in zip(columns, columns[1:], strict=False):
         lq, rq = connector.quote(left), connector.quote(right)
         comparisons.append(f"({rq} IS NOT NULL AND {lq} IS NOT NULL AND {rq} < {lq})")
     predicate = " OR ".join(comparisons) if comparisons else "0=1"
+    base_where = where_clause(extra_where)
+    joiner = " AND " if extra_where else " WHERE "
     return (
-        f"SELECT COUNT(*) FROM {connector.qualified(entity.target_table, entity.target_schema)}"
-        f"{where_clause(entity.filter_target)} "
-        f"{'AND' if entity.filter_target else 'WHERE'} ({predicate})"
+        f"SELECT COUNT(*) FROM {connector.relation_sql(ref)}"
+        f"{base_where}{joiner}({predicate})"
     )
+
+
+def _temporal_count_rows(
+    connector: Connector, ref: RelationRef, columns: list[str], extra_where: str | None
+) -> int:
+    rows = connector.fetch_rows(ref, extra_where)
+    bad = 0
+    for row in rows:
+        for left, right in zip(columns, columns[1:], strict=False):
+            left_val, right_val = row.get(left), row.get(right)
+            if left_val is not None and right_val is not None and right_val < left_val:
+                bad += 1
+                break
+    return bad
 
 
 def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
     results: list[CheckResult] = []
+    tgt = target_relation(entity)
     for invariant in entity.invariants:
+        evidence: dict[str, Any] = {}
         if invariant.kind == "temporal":
-            sql = _temporal_sql(target, entity, invariant.columns)
+            if _is_api_dialect(target):
+                numeric = _temporal_count_rows(target, tgt, invariant.columns, entity.filter_target)
+                evidence = {"mode": "in_process", "columns": invariant.columns}
+            else:
+                sql = _temporal_count_sql(target, tgt, invariant.columns, entity.filter_target)
+                numeric = target.scalar(sql)
+                evidence = {"sql": sql}
         elif invariant.kind == "orphans":
+            if _is_api_dialect(target):
+                results.append(
+                    _ok(
+                        id=f"L5.{entity.name}.invariant.{invariant.name}",
+                        level="5",
+                        title=f"Invariant {invariant.name}",
+                        entity=entity.name,
+                        concern=invariant.concern,
+                        status=CheckStatus.SKIP,
+                        message="Orphan invariants require SQL joins; skipped on API targets",
+                    )
+                )
+                continue
             child = target.qualified(invariant.child_table or "", None)
             parent = target.qualified(invariant.parent_table or "", None)
             sql = (
@@ -514,10 +521,27 @@ def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
                 f"= child.{target.quote(invariant.child_key or '')} "
                 f"WHERE parent.{target.quote(invariant.parent_key or '')} IS NULL"
             )
+            numeric = target.scalar(sql)
+            evidence = {"sql": sql}
         else:
+            if _is_api_dialect(target):
+                results.append(
+                    _ok(
+                        id=f"L5.{entity.name}.invariant.{invariant.name}",
+                        level="5",
+                        title=f"Invariant {invariant.name}",
+                        entity=entity.name,
+                        concern=invariant.concern,
+                        status=CheckStatus.SKIP,
+                        message="Raw SQL invariants are not supported on API targets",
+                    )
+                )
+                continue
             sql = invariant.sql or "SELECT 0"
-        actual = target.scalar(sql)
-        numeric = 0 if actual is None else actual
+            numeric = target.scalar(sql)
+            evidence = {"sql": sql}
+
+        numeric = 0 if numeric is None else numeric
         status = CheckStatus.PASS if numeric == invariant.expect else CheckStatus.FAIL
         results.append(
             _ok(
@@ -531,7 +555,7 @@ def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
                 actual=numeric,
                 variance=None if not isinstance(numeric, (int, float)) else numeric - invariant.expect,
                 message="Target remains internally consistent" if status == CheckStatus.PASS else "Business invariant broken",
-                evidence={"sql": sql},
+                evidence=evidence,
             )
         )
     return results
@@ -547,9 +571,9 @@ def check_failure_probes(
     probes = entity.failure_probes
     if not probes:
         return []
-    source_rows = _fetch(source, entity.source_table, entity.source_schema, entity.filter_source)
+    source_rows = source.fetch_rows(source_relation(entity), entity.filter_source)
     target_rows = _index_by_key(
-        _fetch(target, entity.target_table, entity.target_schema, entity.filter_target),
+        target.fetch_rows(target_relation(entity), entity.filter_target),
         entity.business_key,
     )
     results: list[CheckResult] = []

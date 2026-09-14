@@ -87,6 +87,19 @@ def test_suite_loads_sqlite_without_env():
     assert suite.source.url == "sqlite:///source.db"
 
 
+def test_suite_loads_salesforce_mock_target():
+    suite = SuiteConfig.model_validate(
+        {
+            "name": "cte-api",
+            "contract": "stm.yaml",
+            "source": {"url": "sqlite:///source.db"},
+            "target": {"kind": "salesforce_mock", "fixtures": "fixtures/salesforce"},
+        }
+    )
+    assert suite.target.kind == "salesforce_mock"
+    assert suite.target.fixtures == "fixtures/salesforce"
+
+
 def test_redact_url_without_password_unchanged():
     plain = "sqlite:///C:/data/source.db"
     assert redact_url(plain) == plain

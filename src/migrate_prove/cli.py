@@ -4,13 +4,13 @@ from pathlib import Path
 
 import typer
 
-from migrate_prove.connectors import SqlAlchemyConnector
 from migrate_prove.contract import load_contract, load_suite
 from migrate_prove.demo.banking import seed_banking
+from migrate_prove.demo.cte_api import seed_cte_api
 from migrate_prove.demo.hops_vs_e2e import seed_hops_vs_e2e
 from migrate_prove.engine import ValidationEngine
 from migrate_prove.reporting import print_console, write_html, write_json
-from migrate_prove.secrets import MissingEnvError, load_env, redact_url, resolve_connection
+from migrate_prove.secrets import MissingEnvError, build_connector, describe_connection, load_env
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="Prove migrated data against an STM contract.")
 
@@ -44,17 +44,17 @@ def run(
     base = suite.parent
     contract = load_contract((base / config.contract).resolve())
     try:
-        source_url = resolve_connection(config.source, base)
-        target_url = resolve_connection(config.target, base)
+        source_label = describe_connection(config.source, base)
+        target_label = describe_connection(config.target, base)
+        source = build_connector(config.source, base, name="source")
+        target = build_connector(config.target, base, name="target")
     except MissingEnvError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(f"source: {redact_url(source_url)}")
-    typer.echo(f"target: {redact_url(target_url)}")
+    typer.echo(f"source: {source_label}")
+    typer.echo(f"target: {target_label}")
 
-    source = SqlAlchemyConnector(source_url, name="source")
-    target = SqlAlchemyConnector(target_url, name="target")
     engine = ValidationEngine(source, target)
     report = engine.run(
         contract,
@@ -95,3 +95,16 @@ def seed_hops_demo(
     folder.mkdir(parents=True, exist_ok=True)
     db_path = seed_hops_vs_e2e(folder)
     typer.echo(f"Seeded {db_path}")
+
+
+@app.command("seed-cte-api-demo")
+def seed_cte_api_demo(
+    folder: Path = typer.Argument(
+        Path("examples/cte_api_demo"),
+        help="Directory that will receive source.db and Salesforce fixtures",
+    ),
+) -> None:
+    """Load the CTE-source + Salesforce-mock-target demo."""
+    folder.mkdir(parents=True, exist_ok=True)
+    source_path, fixtures_dir = seed_cte_api(folder)
+    typer.echo(f"Seeded {source_path} and fixtures under {fixtures_dir}")

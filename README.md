@@ -91,6 +91,17 @@ migrate-prove run examples/hops_vs_e2e/suites/e2e.yaml
 
 See [examples/hops_vs_e2e/README.md](examples/hops_vs_e2e/README.md) and [ASSURANCE.md](ASSURANCE.md).
 
+### CTE source + Salesforce (mock) target
+
+Not every migration is table→table. A third demo joins two source tables via a **CTE** and proves against **paginated Salesforce JSON fixtures**:
+
+```powershell
+migrate-prove seed-cte-api-demo examples/cte_api_demo
+migrate-prove run examples/cte_api_demo/suite.yaml
+```
+
+See [examples/cte_api_demo/README.md](examples/cte_api_demo/README.md) and [ADVANCED.md](ADVANCED.md).
+
 ```powershell
 pytest
 ```
@@ -136,7 +147,15 @@ target:
   url: "awsathena+rest://athena.${AWS_REGION}.amazonaws.com:443/${ATHENA_SCHEMA}?s3_staging_dir=${ATHENA_S3_STAGING}&work_group=${ATHENA_WORKGROUP}"
 ```
 
-Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints **redacted** connection URLs only.
+Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints **redacted** connection labels (SQLAlchemy URLs or `salesforce_mock://…` fixture paths).
+
+**API mock target** (no network; see [ADVANCED.md](ADVANCED.md)):
+
+```yaml
+target:
+  kind: salesforce_mock
+  fixtures: fixtures/salesforce
+```
 
 ## Authoring a contract
 
@@ -154,7 +173,7 @@ Transform rules are the oracle, not a second copy of ETL Python. Keep ETL and th
 
 ## Roadmap (v1 is the skeleton that already fails the right way)
 
-1. **Now** — STM YAML, SQLAlchemy connectors, env-backed secrets, L1–L5, hashing, probes, CLI, HTML/JSON, SQLite demo.
+1. **Now** — STM YAML, SQLAlchemy + Salesforce-mock connectors, CTE `source_sql`, env-backed secrets, L1–L5, hashing, probes, CLI, HTML/JSON, demos.
 2. **Excel STM import** — optional extra `openpyxl` to ingest the spreadsheet everyone still has.
 3. **Dialect hash pushdown** — `SHA2` / `sha256` in Postgres, SQL Server, Snowflake so row signatures never leave the estate.
 4. **Stratified sampling at warehouse scale** — deterministic modulus on business keys, 100% for HNW / recent / edge strata.

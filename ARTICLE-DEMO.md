@@ -198,13 +198,15 @@ migrate-prove run examples/hops_vs_e2e/suites/hop_02.yaml   # exit 0
 migrate-prove run examples/hops_vs_e2e/suites/e2e.yaml      # exit 1
 ```
 
-`hop_01.yaml` and `hop_02.yaml` are 'thin' contracts scoped to one boundary each - they only check the rules that boundary owns, per the article's "hop depth" table. `e2e.yaml` points at the full [`e2e_legacy_to_mart.yaml`](examples/hops_vs_e2e/contracts/e2e_legacy_to_mart.yaml) contract and asserts the whole legacy → mart business claim. Every hop reports green; the end-to-end suite fails on exactly the same kind of sliced-volume/transform mismatch as the banking demo. 
+`hop_01.yaml` and `hop_02.yaml` are 'thin' contracts scoped to one boundary each - they only check the rules that boundary owns, per the article's "hop depth" table. `e2e.yaml` points at the full [`e2e_legacy_to_mart.yaml`](examples/hops_vs_e2e/contracts/e2e_legacy_to_mart.yaml) contract and asserts the whole legacy → mart business claim. Every hop reports green; the end-to-end suite fails on exactly the same kind of sliced-volume/transform mismatch as the banking demo.
 
 ### Hop report
 ![Hop](./screenshots/hopreport.png)
 
 ### E2E report
 ![E2E](./screenshots/e2ereport.png)
+
+A third demo, [`examples/cte_api_demo`](examples/cte_api_demo), shows the same oracle against a **CTE-joined SQL source** and a **Salesforce-shaped API target** (fixture-backed, paginated JSON). See [ADVANCED.md](ADVANCED.md).
 
 ---
 

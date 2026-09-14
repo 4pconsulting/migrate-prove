@@ -1,0 +1,44 @@
+{
+  "name": "Account",
+  "fields": [
+    {
+      "name": "Id",
+      "type": "id",
+      "nillable": false,
+      "length": 18
+    },
+    {
+      "name": "External_Id__c",
+      "type": "string",
+      "nillable": false,
+      "length": 40
+    },
+    {
+      "name": "Name",
+      "type": "string",
+      "nillable": false,
+      "length": 255
+    },
+    {
+      "name": "Status__c",
+      "type": "picklist",
+      "nillable": false,
+      "length": 40
+    },
+    {
+      "name": "Current_Balance__c",
+      "type": "currency",
+      "nillable": true
+    },
+    {
+      "name": "CreatedDate",
+      "type": "datetime",
+      "nillable": false
+    },
+    {
+      "name": "Updated_At__c",
+      "type": "datetime",
+      "nillable": true
+    }
+  ]
+}

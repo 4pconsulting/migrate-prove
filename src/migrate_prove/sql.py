@@ -1,7 +1,17 @@
 from __future__ import annotations
 
-from migrate_prove.connectors import Connector
+from migrate_prove.connectors import Connector, RelationRef
 from migrate_prove.models import Entity, Mapping
+
+
+def source_relation(entity: Entity) -> RelationRef:
+    if entity.source_sql is not None:
+        return RelationRef(sql=entity.source_sql.strip(), name=f"{entity.name}_src")
+    return RelationRef(table=entity.source_table, schema=entity.source_schema)
+
+
+def target_relation(entity: Entity) -> RelationRef:
+    return RelationRef(table=entity.target_table, schema=entity.target_schema)
 
 
 def where_clause(clause: str | None) -> str:
@@ -46,24 +56,3 @@ def mapped_dimension_sql(connector: Connector, entity: Entity, target_col: str) 
     if mapping.source:
         return connector.quote(mapping.source)
     return connector.quote(target_col)
-
-
-def group_count_sql(
-    connector: Connector,
-    table: str,
-    schema: str | None,
-    dimensions: list[str],
-    extra_where: str | None = None,
-    dimension_sql: dict[str, str] | None = None,
-) -> str:
-    qualified = connector.qualified(table, schema)
-    selects: list[str] = []
-    groups: list[str] = []
-    for index, dimension in enumerate(dimensions, start=1):
-        expr = (dimension_sql or {}).get(dimension, connector.quote(dimension))
-        alias = connector.quote(dimension)
-        selects.append(f"{expr} AS {alias}")
-        groups.append(str(index))
-    select_sql = ", ".join(selects + ["COUNT(*) AS row_count"])
-    group_sql = ", ".join(groups)
-    return f"SELECT {select_sql} FROM {qualified}{where_clause(extra_where)} GROUP BY {group_sql}"

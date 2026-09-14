@@ -105,12 +105,49 @@ def resolve_connection(
     base: Path,
     environ: Mapping[str, str] | None = None,
 ) -> str:
-    """Turn a suite connection block into a fully resolved SQLAlchemy URL."""
+    """Turn a suite SQLAlchemy connection block into a fully resolved URL."""
     config = block if isinstance(block, ConnectionConfig) else ConnectionConfig.model_validate(block)
+    if config.kind != "sqlalchemy":
+        raise ValueError(f"resolve_connection only supports sqlalchemy kind, got {config.kind!r}")
     if config.url is not None:
         url = expand_string(config.url, environ)
         return _resolve_sqlite_path(url, base)
     return build_url_from_structured(config, environ)
+
+
+def describe_connection(
+    block: ConnectionConfig | dict[str, Any],
+    base: Path,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Human-readable, redacted connection label for console output."""
+    config = block if isinstance(block, ConnectionConfig) else ConnectionConfig.model_validate(block)
+    if config.kind == "salesforce_mock":
+        fixtures = expand_string(config.fixtures or "", environ)
+        path = (base / fixtures).resolve() if fixtures else base
+        return f"salesforce_mock://{path.as_posix()}"
+    return redact_url(resolve_connection(config, base, environ))
+
+
+def build_connector(
+    block: ConnectionConfig | dict[str, Any],
+    base: Path,
+    name: str,
+    environ: Mapping[str, str] | None = None,
+):
+    """Construct a Connector from a suite connection block."""
+    from migrate_prove.connectors import SqlAlchemyConnector
+    from migrate_prove.salesforce import SalesforceMockConnector
+
+    config = block if isinstance(block, ConnectionConfig) else ConnectionConfig.model_validate(block)
+    if config.kind == "salesforce_mock":
+        fixtures = expand_string(config.fixtures or "", environ)
+        path = Path(fixtures)
+        if not path.is_absolute():
+            path = (base / path).resolve()
+        return SalesforceMockConnector(path, name=name)
+    url = resolve_connection(config, base, environ)
+    return SqlAlchemyConnector(url, name=name)
 
 
 def redact_url(url: str) -> str:

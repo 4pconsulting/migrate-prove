@@ -1,0 +1,85 @@
+{
+  "totalSize": 12,
+  "done": true,
+  "nextRecordsUrl": null,
+  "records": [
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000007AAA"
+      },
+      "Id": "001000000000007AAA",
+      "External_Id__c": "C007",
+      "Name": "Jean Bartik",
+      "Status__c": "Active",
+      "Current_Balance__c": 875.0,
+      "CreatedDate": "2020-07-01T10:00:00.000+0000",
+      "Updated_At__c": "2019-01-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000008AAA"
+      },
+      "Id": "001000000000008AAA",
+      "External_Id__c": "C008",
+      "Name": "Niels Bohr",
+      "Status__c": "Active",
+      "Current_Balance__c": 430.0,
+      "CreatedDate": "2021-01-01T10:00:00.000+0000",
+      "Updated_At__c": "2021-02-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000009AAA"
+      },
+      "Id": "001000000000009AAA",
+      "External_Id__c": "C009",
+      "Name": "Emmy Noether",
+      "Status__c": "Active",
+      "Current_Balance__c": 99.99,
+      "CreatedDate": "2020-11-01T10:00:00.000+0000",
+      "Updated_At__c": "2021-11-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000010AAA"
+      },
+      "Id": "001000000000010AAA",
+      "External_Id__c": "C010",
+      "Name": "M\u00fcnchen Holdings",
+      "Status__c": "Active",
+      "Current_Balance__c": 88.4,
+      "CreatedDate": "2022-01-01T10:00:00.000+0000",
+      "Updated_At__c": "2022-03-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000011AAA"
+      },
+      "Id": "001000000000011AAA",
+      "External_Id__c": "C011",
+      "Name": "Boundary Case",
+      "Status__c": "Suspended",
+      "Current_Balance__c": 10.0,
+      "CreatedDate": "2024-01-01T10:00:00.000+0000",
+      "Updated_At__c": "2024-02-01T10:00:00.000+0000"
+    },
+    {
+      "attributes": {
+        "type": "Account",
+        "url": "/services/data/v59.0/sobjects/Account/001000000000012AAA"
+      },
+      "Id": "001000000000012AAA",
+      "External_Id__c": "C012",
+      "Name": "Legacy Corp",
+      "Status__c": "Closed",
+      "Current_Balance__c": 15.0,
+      "CreatedDate": "2017-01-01T10:00:00.000+0000",
+      "Updated_At__c": "2017-06-01T10:00:00.000+0000"
+    }
+  ]
+}
