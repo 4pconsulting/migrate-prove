@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,9 +8,18 @@ version = "0.1.0"
 description = "Prove that migrated target data matches the Source-to-Target Mapping contract — not just that the ETL job exited 0."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
-authors = [{ name = "migrate-prove" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Dan Webb" }]
 keywords = ["data-migration", "etl", "reconciliation", "qa", "validation"]
+classifiers = [
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Testing",
+]
 dependencies = [
   "pydantic>=2.7",
   "pyyaml>=6.0",
@@ -25,6 +34,11 @@ dev = ["pytest>=8.0"]
 excel = ["openpyxl>=3.1"]
 postgres = ["psycopg[binary]>=3.1"]
 athena = ["pyathena[sqlalchemy]>=3.0"]
+
+[project.urls]
+Homepage = "https://github.com/4pconsulting/migrate-prove"
+Repository = "https://github.com/4pconsulting/migrate-prove"
+Issues = "https://github.com/4pconsulting/migrate-prove/issues"
 
 [project.scripts]
 migrate-prove = "migrate_prove.cli:app"

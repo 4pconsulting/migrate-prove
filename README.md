@@ -62,6 +62,21 @@ Separating those tags is how you debug cutover night: dropped rows vs bad lookup
 
 Each entity has `risk: critical | master | high_volume`. Critical failures are called out on the HTML scorecard. Sampling policy (`full` or `stratified` with `where` + `rate`) is on the entity so high-volume logs are not brute-forced during a four-hour window. v1 hashing still runs in-process (SQLite/demo scale); SQL-pushdown hashing is the next connector increment.
 
+## Install
+
+```powershell
+pip install migrate-prove
+pip install "migrate-prove[postgres]"
+pip install "migrate-prove[athena]"
+pip install "migrate-prove[excel]"
+```
+
+`postgres` installs the psycopg driver, `athena` installs the PyAthena SQLAlchemy dialect, and `excel` installs openpyxl. The demos and their YAML live in this repository, so clone it and follow the quick start below to seed and run them.
+
+## Releasing
+
+Bump `version` in `pyproject.toml` in the pull request. Merging that change to `main` publishes the new version to PyPI. A push that does not change the version does not upload again.
+
 ## Quick start
 
 Ensure you are in the root `migrate-prove` directory.
