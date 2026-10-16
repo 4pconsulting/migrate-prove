@@ -1,0 +1,27 @@
+# Skeleton STM — fill via Oracle + prove-* skills; compile before Suite handoff.
+version: 1
+name: REPLACE_ME
+
+entities:
+  - name: REPLACE_entity
+    source_table: REPLACE_source_table   # or use source_sql instead (exactly one)
+    # source_sql: |
+    #   SELECT ...
+    target_table: REPLACE_target_table
+    # source_schema: optional
+    # target_schema: optional
+    business_key: [REPLACE_bk]
+    # source_key: [REPLACE_source_bk]   # if target BK names differ
+    risk: master   # critical | master | high_volume
+    failure_probes: []
+    volume_slices: []
+    mappings:
+      - source: REPLACE_src_col
+        target: REPLACE_tgt_col
+        kind: direct   # direct | transform | coerce | default | surrogate
+        nullable: true
+        normalize: { trim: true }
+    metrics: []
+    invariants: []
+    sample:
+      strategy: full

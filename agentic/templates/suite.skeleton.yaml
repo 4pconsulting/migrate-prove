@@ -1,0 +1,21 @@
+# Suite — fill via Suite agent + elicit-connections. Secrets only as ${ENV}.
+name: REPLACE_suite_name
+contract: stm.yaml
+source:
+  # Option A: URL
+  url: ${SOURCE_URL}
+  # Option B: structured (omit url)
+  # dialect: postgresql+psycopg
+  # host: ${SOURCE_HOST}
+  # port: 5432
+  # database: ${SOURCE_DB}
+  # username: ${SOURCE_USER}
+  # password: ${SOURCE_PASSWORD}
+  # Option C: Salesforce mock fixtures
+  # kind: salesforce_mock
+  # fixtures: fixtures/salesforce
+target:
+  url: ${TARGET_URL}
+output_dir: artifacts
+continue_on_fail: true
+levels: ["1", "probes", "2", "3", "4", "hash", "5"]
