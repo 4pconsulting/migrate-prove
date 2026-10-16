@@ -1,9 +1,9 @@
 ﻿---
 name: prove-probes
 description: >-
-  Configures migrate-prove failure-mode probes on STM entities (truncation,
-  precision, leading_zeros, charset, null_empty_literal). Use when authoring
-  edge-case checks for first landings or critical entities.
+  Configures migrate-prove failure-mode probes as suite checks (truncation,
+  precision, leading_zeros, charset, null_empty_literal). Mapping constraints
+  stay on the STM.
 ---
 
 # prove-probes (Cursor wrapper)

@@ -29,7 +29,7 @@ def compile(
 
 @app.command()
 def run(
-    suite: Path = typer.Argument(..., exists=True, help="Suite YAML (connections + contract path)"),
+    suite: Path = typer.Argument(..., exists=True, help="Suite YAML (connections + checks)"),
     entity: list[str] = typer.Option(None, "--entity", "-e", help="Limit to named entities"),
     env_file: Path | None = typer.Option(
         None,
@@ -38,11 +38,13 @@ def run(
         exists=True,
         dir_okay=False,
     ),
+    no_schema_check: bool = typer.Option(
+        False,
+        "--no-schema-check",
+        help="Skip automatic schema WARN preamble and row smoke",
+    ),
 ) -> None:
-    """Run the multi-tier validation pipeline and write an evidence scorecard.
-
-    Suite ``run`` field selects intent: prove | observe-source | observe-target.
-    """
+    """Run suite-declared prove checks and write an evidence scorecard."""
     load_env(env_file)
     config = load_suite(suite)
     base = suite.parent
@@ -54,38 +56,32 @@ def run(
         target = None
         source_label = "(not connected)"
         target_label = "(not connected)"
-        if config.run == "prove":
-            assert config.source is not None and config.target is not None
-            source_label = describe_connection(config.source, base)
-            target_label = describe_connection(config.target, base)
-            source = build_connector(config.source, base, name="source")
-            target = build_connector(config.target, base, name="target")
-        elif config.run == "observe-source":
-            assert config.source is not None
+        if config.source is not None:
             source_label = describe_connection(config.source, base)
             source = build_connector(config.source, base, name="source")
-        else:
-            assert config.target is not None
+        if config.target is not None:
             target_label = describe_connection(config.target, base)
             target = build_connector(config.target, base, name="target")
     except MissingEnvError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(f"run:    {config.run}")
+    typer.echo(f"checks: {len(config.checks)}")
     typer.echo(f"source: {source_label}")
     typer.echo(f"target: {target_label}")
 
     engine = ValidationEngine(
         source,
         target,
-        run=config.run,
         output_dir=output_dir,
         progress=ConsoleProgress(),
+        schema_check=not no_schema_check,
+        row_smoke_n=None if no_schema_check else config.row_smoke_n(),
+        params=config.params,
     )
     report = engine.run(
         contract,
-        levels=config.levels,
+        checks=config.checks,
         continue_on_fail=config.continue_on_fail,
         entities=entity or None,
     )

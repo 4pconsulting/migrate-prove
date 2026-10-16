@@ -21,18 +21,18 @@ Produce `suite.yaml` and `.env.example` from a compiling STM. Always elicit conn
 
 ## Process
 
-1. Confirm STM path and which `levels` are ready (from Oracle checklist).
-2. Run the elicit-connections interview for **source** and **target**.
+1. Confirm STM path and which prove **checks** are ready (from Oracle checklist).
+2. Run the elicit-connections interview for **source** and/or **target**.
 3. Map answers to supported `ConnectionConfig`:
    - `kind: sqlalchemy` (URL or structured dialect/host/database)
    - `kind: salesforce_mock` + `fixtures`
    - `kind: salesforce` + url / api_version / client_id / client_secret
    - `kind: http` + base_url / auth / resources
 4. If the user needs an unsupported kind (Excel/files as a live connector, etc.), document a **blocker** — do not emit fake connector YAML. Note `pip install migrate-prove[http]` / `[salesforce]` when extras are required.
-5. If only one side is reachable, set `run: observe-source` or `run: observe-target` and omit the other connection (prefer a separate suite file from full prove).
-6. Write suite YAML with `${ENV}` for secrets only.
-7. Write `.env.example` listing required variable names (reuse stubs from repo root `.env.example` for SQL / Salesforce / HTTP).
-8. Align `levels` with deferred STM dimensions.
+5. If only one side is reachable, omit the other connection and keep `checks[]` (one-sided emit PASS + evidence).
+6. Author suite `checks[]` (count, group_count, sum, transforms, hash, probes, invariant, …) from the Oracle checklist — omit deferred items.
+7. Write suite YAML with `${ENV}` for secrets only.
+8. Write `.env.example` listing required variable names (reuse stubs from repo root `.env.example` for SQL / Salesforce / HTTP).
 
 ## Hard rules
 

@@ -1,9 +1,9 @@
 ﻿---
 name: prove-volume
 description: >-
-  Authors migrate-prove L2 volume checks in STM YAML (volume_slices after STM
-  lookups). Use when defining cardinality and sliced counts for hop or e2e
-  contracts.
+  Authors migrate-prove volume checks in suite YAML (count / group_count with
+  optional filters and side-aware dimensions). Use when defining cardinality
+  for hop or e2e suites.
 ---
 
 # prove-volume (Cursor wrapper)

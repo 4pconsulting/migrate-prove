@@ -1,9 +1,8 @@
 ﻿---
 name: prove-invariants
 description: >-
-  Authors migrate-prove L5 business invariants in STM YAML (temporal, orphans,
-  or arbitrary target SQL). Use when encoding target-side coherence rules for
-  cutover or hop-specific relationships.
+  Authors migrate-prove target-side invariants as suite checks (temporal,
+  orphans, or arbitrary target SQL). Mapping max_length/nullable stay on STM.
 ---
 
 # prove-invariants (Cursor wrapper)

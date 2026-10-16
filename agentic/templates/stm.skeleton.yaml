@@ -1,4 +1,4 @@
-# Skeleton STM — fill via Oracle + prove-* skills; compile before Suite handoff.
+# Skeleton STM — mapping oracle only. Prove checks belong in the suite YAML.
 version: 1
 name: REPLACE_ME
 
@@ -13,15 +13,10 @@ entities:
     business_key: [REPLACE_bk]
     # source_key: [REPLACE_source_bk]   # if target BK names differ
     risk: master   # critical | master | high_volume
-    failure_probes: []
-    volume_slices: []
     mappings:
       - source: REPLACE_src_col
         target: REPLACE_tgt_col
         kind: direct   # direct | transform | coerce | default | surrogate
         nullable: true
+        # max_length: 40
         normalize: { trim: true }
-    metrics: []
-    invariants: []
-    sample:
-      strategy: full

@@ -34,27 +34,28 @@ STM YAML (oracle)
 
 Target correctness is **not** `source == target`. Different can be right (status `A` → `Active`). The STM file is the shared, versioned specification:
 
-| Dimension | How the suite tests it |
-| --- | --- |
-| Direct projections | Canonicalise, then compare / hash |
-| Transformations | Lookup tables and `when`/`then` rules run against source, asserted on target |
-| Type coercions | Decimal scale, string length, identifier quoting |
-| Null / empty / `N/A` | Failure probe `null_empty_literal` |
-| Dedup / filters | Optional `filter_source` / `filter_target` |
-| Cardinality | Total counts **and** slices (`volume_slices`) |
-| Surrogate keys | Join on mapped business keys, not physical PKs |
-
-### Five layers (+ hash + probes)
-
-| Layer | Question | Typical concern tag |
+| Dimension | Where it lives | How it is tested |
 | --- | --- | --- |
-| L1 Schema | Do mapped objects/columns exist? | migration |
-| Probes | Truncation, precision, encoding, leading zeros | transformation |
-| L2 Volume | Totals and slices after applying STM lookups | migration / transformation |
-| L3 Metrics | Sums and grouped financials within tolerance | reconciliation |
-| L4 Transforms | Every STM rule vs actual target value | transformation |
-| HASH | Missing/extra keys vs row SHA-256 | migration / transformation |
-| L5 Invariants | Temporal order, orphans, state machines | reconciliation |
+| Direct projections | STM `mappings` | Suite `transforms` / `hash` / `row_sample` |
+| Transformations | STM lookup / `when`/`then` | Suite `transforms` |
+| Type coercions | STM `normalize`, `max_length` | Auto schema WARN + optional `probes` |
+| Null / empty / `N/A` | STM `nullable` / normalize | Auto schema / row smoke + optional `probes` |
+| Dedup / batch filters | Suite check `filter` (+ `params`) | Applied on count/sum/group checks |
+| Cardinality | Suite `count` / `group_count` | Totals and slices after STM lookups |
+| Surrogate keys | STM `business_key` | Join on mapped business keys, not physical PKs |
+
+### Suite check kinds (+ auto schema)
+
+| Kind / preamble | Question | Typical concern tag |
+| --- | --- | --- |
+| Auto schema (+ row smoke) | Do catalogs/constraints match the STM? (WARN) | migration |
+| `schema` | Same as auto, but FAIL gate | migration |
+| `probes` | Truncation, precision, encoding, leading zeros | transformation |
+| `count` / `group_count` | Totals and slices after STM lookups | migration / transformation |
+| `sum` / `group_sum` | Aggregates within tolerance | reconciliation |
+| `transforms` / `row_sample` | STM rules vs actual target values | transformation |
+| `hash` | Missing/extra keys vs row SHA-256 | migration / transformation |
+| `invariant` | Temporal order, orphans, target SQL | reconciliation |
 
 Separating those tags is how you debug cutover night: dropped rows vs bad lookup vs legacy junk copied faithfully.
 
@@ -139,7 +140,7 @@ Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints
 | Salesforce fixtures (CI) | `salesforce_mock` | none | none (`fixtures:` path) | [ADVANCED.md](ADVANCED.md) |
 | Live Salesforce | `salesforce` | `[salesforce]` | `SALESFORCE_URL`, `SALESFORCE_API_VERSION`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` | [ADVANCED.md](ADVANCED.md) |
 | Raw HTTP API | `http` | `[http]` | `API_BASE_URL`, `API_TOKEN` (or header/basic vars) | [ADVANCED.md](ADVANCED.md) |
-| Only one side reachable | `run: observe-source` or `observe-target` | as for that side | same as live side | [ADVANCED.md](ADVANCED.md) |
+| Only one side reachable | Omit the other connection; suite `checks` emit that side (PASS) | as for that side | same as live side | [ADVANCED.md](ADVANCED.md) |
 | Grain split across tables | entity `source_parts` / `target_parts` | — | — | [ADVANCED.md](ADVANCED.md) |
 
 Unsupported as live connectors today (record a blocker; do not invent `kind`): Excel/files, arbitrary undocumented APIs without an `http` resource map.
@@ -211,49 +212,56 @@ target:
       next_jmespath: next
 ```
 
-### Run intent (suite `run` field)
+### STM vs suite
 
-The suite declares what kind of run this is — not the CLI:
+| Artifact | Owns |
+| --- | --- |
+| **STM (`stm.yaml`)** | Mapping oracle: entities, relations, `business_key`, `mappings` (`nullable`, `max_length`, lookups, rules) |
+| **Suite** | Connections + explicit **`checks[]`** (count, sum, group_*, transforms, hash, probes, invariant, …) |
 
-| `run` | Connections | Behaviour |
-| --- | --- | --- |
-| `prove` (default) | source **and** target | Full pairwise checks |
-| `observe-target` | target only | Export target rows; pairwise SKIP |
-| `observe-source` | source only | Export source rows; pairwise SKIP |
+Every run is a **prove**. Omit `source` or `target` for one-sided emit (PASS + query evidence). Both sides → compare.
+
+Automatic **schema WARN** preamble runs for every entity unless `--no-schema-check` (optional row smoke samples N rows against mapping constraints).
 
 ```yaml
 # Full prove — e.g. Athena → Salesforce
-run: prove
+name: cutover
+contract: stm.yaml
 source:
   url: "awsathena+rest://..."
 target:
   kind: salesforce
   url: ${SALESFORCE_URL}
   # …
+params:
+  load_date: "2026-10-01"
+checks:
+  - id: accounts.count
+    kind: count
+    entity: accounts
+    filter:
+      source: "load_date = DATE '${load_date}'"
+      target: "Load_Date__c = ${load_date}T00:00:00Z"
+  - id: accounts.by_status
+    kind: group_count
+    entity: accounts
+    dimensions: [Status__c]
 
-# One-sided export when the other side is unreachable
-run: observe-target
+# One-sided: only target connected — count/sum emit PASS with evidence
+name: target-spotcheck
+contract: stm.yaml
 target:
   kind: salesforce
   url: ${SALESFORCE_URL}
-  # … (omit source)
+checks:
+  - id: accounts.count
+    kind: count
+    entity: accounts
 ```
-
-Exports land under `artifacts/observe/`. Use separate suite files for prove vs observe; share the same `contract`.
 
 ## Authoring a contract
 
-See `examples/banking_demo/stm.yaml`. A suite file points at the contract and the two connections (SQLite needs no secrets):
-
-```yaml
-name: my-cutover
-contract: stm.yaml
-source: { url: sqlite:///source.db }
-target: { url: "${TARGET_URL}" }
-output_dir: artifacts
-```
-
-Transform rules are the oracle, not a second copy of ETL Python. Keep ETL and this file aligned; do not reimplement warehouse SQL ad hoc in tests.
+See `examples/banking_demo/stm.yaml` (mapping only) and `examples/banking_demo/suite.yaml` (checks). Transform rules in the STM are the oracle, not a second copy of ETL Python.
 
 ## Roadmap (v1 is the skeleton that already fails the right way)
 

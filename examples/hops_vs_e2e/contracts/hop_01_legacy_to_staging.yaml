@@ -24,5 +24,3 @@ entities:
         target: balance
         kind: coerce
         normalize: { decimal_places: 2 }
-    sample:
-      strategy: full

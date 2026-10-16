@@ -1,8 +1,8 @@
 version: 1
 name: hop-02-staging-to-mart
 
-# Intentionally thin: schema + total volume only.
-# No status lookup, no volume_slices — so a Closed→Active bug in mart stays invisible.
+# Intentionally thin mapping: schema + total volume only in the suite.
+# No status lookup — so a Closed→Active bug in mart stays invisible on this hop.
 entities:
   - name: customers
     source_table: staging_customer
@@ -15,5 +15,3 @@ entities:
         target: customer_id
         kind: direct
         normalize: { trim: true, upper: true }
-    sample:
-      strategy: full

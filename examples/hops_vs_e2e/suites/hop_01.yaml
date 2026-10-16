@@ -6,4 +6,13 @@ target:
   url: sqlite:///../pipeline.db
 output_dir: ../artifacts/hop_01
 continue_on_fail: true
-levels: ["1", "2", "4", "hash"]
+checks:
+  - id: customers.count
+    kind: count
+    entity: customers
+  - id: customers.transforms
+    kind: transforms
+    entity: customers
+  - id: customers.hash
+    kind: hash
+    entity: customers

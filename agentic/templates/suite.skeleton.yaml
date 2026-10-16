@@ -1,6 +1,9 @@
 # Suite — fill via Suite agent + elicit-connections. Secrets only as ${ENV}.
+# STM = mapping oracle; this file owns connections + prove checks.
 name: REPLACE_suite_name
 contract: stm.yaml
+# params:
+#   load_date: "2026-10-01"
 source:
   # Option A: URL
   url: ${SOURCE_URL}
@@ -31,9 +34,34 @@ source:
   #     next_jmespath: next
 target:
   url: ${TARGET_URL}
-# run: prove                     # default — both connections, pairwise checks
-# run: observe-target            # target only — export + SKIP pairwise
-# run: observe-source            # source only — export + SKIP pairwise
+# Omit source or target for one-sided prove (emit PASS + evidence).
 output_dir: artifacts
 continue_on_fail: true
-levels: ["1", "probes", "2", "3", "4", "hash", "5"]
+# row_smoke: { n: 5 }   # or false to disable (also skipped with --no-schema-check)
+checks:
+  - id: REPLACE_entity.count
+    kind: count
+    entity: REPLACE_entity
+  # - id: REPLACE_entity.by_status
+  #   kind: group_count
+  #   entity: REPLACE_entity
+  #   dimensions: [status]
+  # - id: REPLACE_entity.balance_sum
+  #   kind: sum
+  #   entity: REPLACE_entity
+  #   field: Balance
+  #   tolerance_abs: 0.01
+  # - id: REPLACE_entity.transforms
+  #   kind: transforms
+  #   entity: REPLACE_entity
+  # - id: REPLACE_entity.hash
+  #   kind: hash
+  #   entity: REPLACE_entity
+  # - id: REPLACE_entity.probes
+  #   kind: probes
+  #   entity: REPLACE_entity
+  #   probes: [truncation, leading_zeros]
+  # - id: REPLACE_entity.temporal
+  #   kind: invariant
+  #   entity: REPLACE_entity
+  #   invariant: { kind: temporal, columns: [created_at, updated_at], expect: 0 }

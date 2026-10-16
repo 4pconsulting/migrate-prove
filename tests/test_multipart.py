@@ -71,7 +71,6 @@ def test_entity_parts_xor():
                 },
                 {"source": "Balance", "target": "Balance__c"},
             ],
-            "volume_slices": [["Status__c"]],
         }
     )
     assert len(target_relations(entity)) == 2
@@ -103,17 +102,27 @@ def test_multipart_volume_and_slice(tmp_path: Path):
                 },
                 {"source": "Balance", "target": "Balance__c"},
             ],
-            "volume_slices": [["Status__c"]],
         }
     )
-    from migrate_prove.models import Contract
+    from migrate_prove.models import Contract, SuiteCheck
 
     contract = Contract(name="split", entities=[entity])
-    report = ValidationEngine(source, target).run(contract, levels=["1", "2"])
+    checks = [
+        SuiteCheck(id="accounts.count", kind="count", entity="accounts"),
+        SuiteCheck(
+            id="accounts.by_status",
+            kind="group_count",
+            entity="accounts",
+            dimensions=["Status__c"],
+        ),
+    ]
+    report = ValidationEngine(source, target, schema_check=False, row_smoke_n=None).run(
+        contract, checks=checks
+    )
     by_id = {item.id: item for item in report.results}
-    assert by_id["L2.accounts.volume.total"].status == CheckStatus.PASS
-    assert by_id["L2.accounts.volume.total"].expected == 3
-    assert by_id["L2.accounts.volume.by_Status__c"].status == CheckStatus.PASS
+    assert by_id["accounts.count"].status == CheckStatus.PASS
+    assert by_id["accounts.count"].expected == 3
+    assert by_id["accounts.by_status"].status == CheckStatus.PASS
 
     rows = fetch_concat(target, target_relations(entity))
     assert sorted(row["External_Id__c"] for row in rows) == ["C1", "C2", "C3"]
@@ -149,10 +158,17 @@ def test_multipart_schema_fails_when_part_missing_column(tmp_path: Path):
     )
     from migrate_prove.models import Contract
 
+    from migrate_prove.models import SuiteCheck
+
     report = ValidationEngine(
         SqlAlchemyConnector(url, name="source"),
         SqlAlchemyConnector(url, name="target"),
-    ).run(Contract(name="bad", entities=[entity]), levels=["1"])
+        schema_check=False,
+        row_smoke_n=None,
+    ).run(
+        Contract(name="bad", entities=[entity]),
+        checks=[SuiteCheck(id="accounts.schema", kind="schema", entity="accounts")],
+    )
     columns = next(item for item in report.results if item.id.endswith(".columns"))
     assert columns.status == CheckStatus.FAIL
     assert "Name" in columns.actual["target_missing"]

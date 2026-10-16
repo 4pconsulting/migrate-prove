@@ -26,8 +26,6 @@ entities:
     business_key: [External_Id__c]
     source_key: [CustID]
     risk: critical
-    volume_slices:
-      - [Status__c]
     mappings:
       - source: CustID
         target: External_Id__c
@@ -59,20 +57,3 @@ entities:
         target: Updated_At__c
         kind: direct
         in_hash: false
-    metrics:
-      - name: total_balance
-        source_sql: SUM(Balance)
-        target_sql: SUM(Current_Balance__c)
-        tolerance_abs: 0.01
-      - name: account_count
-        source_sql: COUNT(*)
-        target_sql: COUNT(*)
-      - name: balance_by_status
-        source_sql: SUM(Balance)
-        target_sql: SUM(Current_Balance__c)
-        group_by: [Status__c]
-        tolerance_abs: 0.01
-    invariants:
-      - name: temporal_integrity
-        kind: temporal
-        columns: [CreatedDate, Updated_At__c]

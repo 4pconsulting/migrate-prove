@@ -1,9 +1,8 @@
 ﻿---
 name: prove-metrics
 description: >-
-  Authors migrate-prove L3 metric reconciliation in STM YAML (SUM/COUNT with
-  absolute or percent tolerance and optional group_by). Use when finance or KPI
-  tolerances are agreed for an entity.
+  Authors migrate-prove metric checks in suite YAML (sum / group_sum with
+  tolerance). Use when finance or KPI tolerances are agreed for an entity.
 ---
 
 # prove-metrics (Cursor wrapper)

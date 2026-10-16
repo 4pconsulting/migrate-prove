@@ -88,18 +88,9 @@ entities:
         kind: transform
         lookup: { A: Active, S: Suspended, C: Closed }
       # ...
-    volume_slices: [[status]]
-    metrics:
-      - name: total_balance
-        source_sql: SUM(Balance)
-        target_sql: SUM(current_balance)
-    invariants:
-      - name: temporal_integrity
-        kind: temporal
-        columns: [created_at, updated_at]
 ```
 
-This file is the **shared specification**. ETL may implement it across three jobs; tests must not invent a second, drifting “truth.”
+This STM is the **shared mapping specification**. Prove intent (`count`, `group_count`, `sum`, `invariant`, …) lives in the **suite** `checks[]` that points at this contract. ETL may implement the STM across three jobs; tests must not invent a second, drifting “truth.”
 
 ### 2. Add thin hop contracts at boundaries
 
@@ -116,14 +107,13 @@ suites/
 Example hop (staging must not map status yet — only land safely):
 
 ```yaml
-# contracts/hops/raw_to_staging.yaml
+# contracts/hops/raw_to_staging.yaml — mapping only
 entities:
   - name: customer_raw
     source_table: raw.customer
     target_table: staging.customer
     business_key: [cust_id]
     risk: master
-    failure_probes: [truncation, charset, leading_zeros, precision]
     mappings:
       - source: CustID
         target: cust_id
@@ -131,7 +121,17 @@ entities:
       - source: Status
         target: status_code          # still A/S/C
         kind: direct
-    volume_slices: [[status_code]]
+
+# suites/hop_01.yaml — probes + volume declared as checks
+checks:
+  - id: customer_raw.by_status
+    kind: group_count
+    entity: customer_raw
+    dimensions: [status_code]
+  - id: customer_raw.probes
+    kind: probes
+    entity: customer_raw
+    probes: [truncation, charset, leading_zeros, precision]
 ```
 
 Example hop that **owns** the status lookup:

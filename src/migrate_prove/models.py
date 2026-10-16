@@ -83,30 +83,10 @@ class Stratum(BaseModel):
 
 
 class SamplePolicy(BaseModel):
+    """Optional sampling policy for future hash/row_sample strategies."""
+
     strategy: Literal["full", "stratified"] = "full"
     strata: list[Stratum] = []
-
-
-class Metric(BaseModel):
-    name: str
-    source_sql: str
-    target_sql: str
-    group_by: list[str] = []
-    tolerance_abs: float = 0.0
-    tolerance_pct: float | None = None
-
-
-class Invariant(BaseModel):
-    name: str
-    kind: Literal["sql", "orphans", "temporal"] = "sql"
-    sql: str | None = None
-    expect: int | float = 0
-    columns: list[str] = []
-    child_table: str | None = None
-    child_key: str | None = None
-    parent_table: str | None = None
-    parent_key: str | None = None
-    concern: Concern = Concern.reconciliation
 
 
 class RelationPart(BaseModel):
@@ -128,6 +108,8 @@ class RelationPart(BaseModel):
 
 
 class Entity(BaseModel):
+    """STM entity: relations + mappings only (test intent lives in the suite)."""
+
     name: str
     source_table: str | None = None
     source_sql: str | None = None
@@ -141,13 +123,6 @@ class Entity(BaseModel):
     source_key: list[str] | None = None
     risk: RiskLevel = RiskLevel.master
     mappings: list[Mapping]
-    volume_slices: list[list[str]] = []
-    metrics: list[Metric] = []
-    invariants: list[Invariant] = []
-    sample: SamplePolicy = Field(default_factory=SamplePolicy)
-    filter_source: str | None = None
-    filter_target: str | None = None
-    failure_probes: list[str] = []
 
     @model_validator(mode="after")
     def relation_bindings(self) -> Entity:
@@ -188,6 +163,12 @@ class Entity(BaseModel):
                 return mapping
         return None
 
+    def mapping_for_source(self, source: str) -> Mapping | None:
+        for mapping in self.mappings:
+            if mapping.source == source:
+                return mapping
+        return None
+
     def source_key_columns(self) -> list[str]:
         if self.source_key:
             return self.source_key
@@ -210,6 +191,12 @@ class Contract(BaseModel):
     name: str
     entities: list[Entity]
 
+    def entity_by_name(self, name: str) -> Entity:
+        for entity in self.entities:
+            if entity.name == name:
+                return entity
+        raise KeyError(f"Unknown entity {name!r}")
+
 
 class CheckResult(BaseModel):
     id: str
@@ -224,6 +211,96 @@ class CheckResult(BaseModel):
     message: str = ""
     evidence: dict[str, Any] = Field(default_factory=dict)
     duration_ms: float = 0.0
+
+
+class CheckFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str | None = None
+    target: str | None = None
+
+
+class DimensionSpec(BaseModel):
+    """Group-by dimension: mapped shorthand or explicit side/names."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str | None = None
+    side: Literal["source", "target", "both"] = "both"
+    source: str | None = None
+    target: str | None = None
+
+    @model_validator(mode="after")
+    def resolve_field(self) -> DimensionSpec:
+        if self.field is None and self.source is None and self.target is None:
+            raise ValueError("Dimension requires field and/or source/target names")
+        if self.field is None:
+            object.__setattr__(self, "field", self.target or self.source)
+        return self
+
+
+class InvariantSpec(BaseModel):
+    """Target-side coherence rule (suite check kind: invariant)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = None
+    kind: Literal["sql", "orphans", "temporal"] = "sql"
+    sql: str | None = None
+    expect: int | float = 0
+    columns: list[str] = []
+    child_table: str | None = None
+    child_key: str | None = None
+    parent_table: str | None = None
+    parent_key: str | None = None
+    concern: Concern = Concern.reconciliation
+
+
+class SuiteCheck(BaseModel):
+    """One prove check declared in the suite (not in the STM)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: Literal[
+        "schema",
+        "count",
+        "group_count",
+        "sum",
+        "group_sum",
+        "transforms",
+        "row_sample",
+        "hash",
+        "probes",
+        "invariant",
+    ]
+    entity: str
+    field: str | None = None
+    fields: list[str] | None = None
+    dimensions: list[str | DimensionSpec] = []
+    filter: CheckFilter | None = None
+    tolerance_abs: float = 0.0
+    tolerance_pct: float | None = None
+    n: int = 5
+    probes: list[str] = []
+    invariant: InvariantSpec | None = None
+    source_expr: str | None = None
+    target_expr: str | None = None
+
+    def resolved_dimensions(self) -> list[DimensionSpec]:
+        out: list[DimensionSpec] = []
+        for item in self.dimensions:
+            if isinstance(item, str):
+                out.append(DimensionSpec(field=item, side="both"))
+            else:
+                out.append(item)
+        return out
+
+
+class RowSmokeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    n: int = 5
 
 
 class ConnectionConfig(BaseModel):
@@ -334,7 +411,6 @@ class ConnectionConfig(BaseModel):
                 raise ValueError("http connections require `resources`")
             return self
 
-        # sqlalchemy
         has_url = self.url is not None
         has_structured = self._has_sqlalchemy_structured()
         if self.fixtures is not None:
@@ -365,81 +441,43 @@ class ConnectionConfig(BaseModel):
 
 
 class SuiteConfig(BaseModel):
-    """Suite binding: contract + connections + run intent.
+    """Suite: connections + explicit prove checks against an STM contract."""
 
-    ``run`` is the source of truth:
-    - ``prove`` — both connections; pairwise checks
-    - ``observe-source`` / ``observe-target`` — one-sided export; pairwise SKIP
-    """
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     contract: str
     source: ConnectionConfig | None = None
     target: ConnectionConfig | None = None
-    run: Literal["prove", "observe-source", "observe-target"] = "prove"
+    checks: list[SuiteCheck] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
     output_dir: str = "artifacts"
     continue_on_fail: bool = True
-    levels: list[str] = Field(
-        default_factory=lambda: ["1", "2", "3", "4", "5", "hash", "probes"]
-    )
+    row_smoke: RowSmokeConfig | Literal[False] | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def legacy_mode_observe_side(cls, data: Any) -> Any:
-        """Map deprecated mode/observe_side → run."""
+    def reject_legacy_run_levels(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        if "run" in data:
-            if "mode" in data or "observe_side" in data:
-                raise ValueError(
-                    "Use `run` alone (prove | observe-source | observe-target); "
-                    "do not combine with deprecated mode/observe_side"
-                )
-            return data
-        mode = data.pop("mode", None)
-        side = data.pop("observe_side", None)
-        if mode is None and side is None:
-            return data
-        if mode in (None, "prove"):
-            if side is not None:
-                raise ValueError("observe_side requires mode: observe (or use run: observe-*)")
-            data["run"] = "prove"
-            return data
-        if mode == "observe":
-            if side == "source":
-                data["run"] = "observe-source"
-            elif side == "target":
-                data["run"] = "observe-target"
-            else:
-                raise ValueError(
-                    "Deprecated mode: observe requires observe_side: source|target "
-                    "(prefer run: observe-source | observe-target)"
-                )
-            return data
-        raise ValueError(f"Unknown deprecated mode: {mode!r}")
+        legacy = [key for key in ("run", "levels", "mode", "observe_side") if key in data]
+        if legacy:
+            raise ValueError(
+                "Suite no longer uses "
+                + ", ".join(legacy)
+                + "; declare prove checks under `checks` and omit unused connections for one-sided emit"
+            )
+        return data
 
     @model_validator(mode="after")
-    def run_connections(self) -> SuiteConfig:
-        if self.run == "prove":
-            if self.source is None or self.target is None:
-                raise ValueError("run: prove requires both source and target connections")
-            return self
-        if self.run == "observe-source":
-            if self.source is None:
-                raise ValueError("run: observe-source requires a source connection")
-            return self
-        if self.target is None:
-            raise ValueError("run: observe-target requires a target connection")
+    def require_connection(self) -> SuiteConfig:
+        if self.source is None and self.target is None:
+            raise ValueError("Suite requires at least one of source or target connections")
         return self
 
-    @property
-    def is_observe(self) -> bool:
-        return self.run in {"observe-source", "observe-target"}
-
-    @property
-    def observe_side(self) -> Literal["source", "target"] | None:
-        if self.run == "observe-source":
-            return "source"
-        if self.run == "observe-target":
-            return "target"
-        return None
+    def row_smoke_n(self) -> int | None:
+        if self.row_smoke is False:
+            return None
+        if self.row_smoke is None:
+            return 5
+        return self.row_smoke.n

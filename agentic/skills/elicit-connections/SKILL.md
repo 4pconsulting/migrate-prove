@@ -16,7 +16,7 @@ Prefer copying variable stubs from the repo root [`.env.example`](../../../.env.
 
 ## Interview (ask per side: source and target)
 
-1. **Role:** source or target? (or observe-only one side)
+1. **Role:** source or target? (or one-sided prove — only one connection)
 2. **System kind:** Athena | MSSQL | Postgres | SQLite | other SQL | Salesforce | other API | Excel/files | unknown
 3. **Shape:**
    - Table(s) vs CTE / custom SQL (`source_sql` / `target_sql` live on the **entity**, not the connection)
@@ -24,7 +24,7 @@ Prefer copying variable stubs from the repo root [`.env.example`](../../../.env.
    - For Salesforce: mock fixtures path vs live API
    - For other APIs: list/schema paths, pagination JMESPath, auth type (`bearer` | `header` | `basic`)
 4. **How to connect:** full SQLAlchemy URL vs structured dialect/host/port/database
-5. **Reachability:** both sides (`run: prove`) or one-sided (`run: observe-source` / `observe-target`)
+5. **Reachability:** both connections, or omit one side for one-sided prove emit
 6. **Secrets:** env var names for user/password/token (never paste production secrets into chat logs if avoidable — prefer var names)
 7. **Extras:** query options, workgroup, SSL, catalog (`options`); for API connectors optional `buffer_rows` / `spill_dir` / `max_rows`
 
@@ -96,20 +96,23 @@ target:
 
 `.env.example` stubs: `API_BASE_URL`, `API_TOKEN`, and/or `API_KEY` / `API_USER` / `API_PASSWORD`.
 
-### Observe runs (one side only)
+### One-sided prove (omit a connection)
 
 ```yaml
-run: observe-target              # or observe-source
+# omit source for target-only prove emit
 target:
   kind: salesforce
   url: ${SALESFORCE_URL}
   api_version: ${SALESFORCE_API_VERSION}
   client_id: ${SALESFORCE_CLIENT_ID}
   client_secret: ${SALESFORCE_CLIENT_SECRET}
-# omit the other connection
+checks:
+  - id: accounts.count
+    kind: count
+    entity: accounts
 ```
 
-Prefer a dedicated suite file per run intent (prove vs observe-*).
+Prefer a dedicated suite file when connections or check sets differ (full prove vs one-sided spotcheck).
 
 ## Unsupported today — do not fake
 
@@ -129,12 +132,12 @@ Prefer a dedicated suite file per run intent (prove vs observe-*).
 | Salesforce mock | `kind: salesforce_mock` + `fixtures` |
 | Live Salesforce | `kind: salesforce` + url / api_version / client_id / client_secret |
 | HTTP API | `kind: http` + base_url / auth / resources |
-| One-sided | `run: observe-source` / `observe-target` |
+| One-sided | Omit unused connection; declare `checks` |
 
 ## Output checklist
 
 - [ ] Suite YAML uses `${VAR}` for secrets
 - [ ] `.env.example` lists every var (mirror root `.env.example` stubs)
 - [ ] Extra noted when `salesforce` / `http` / `postgres` / `athena` required
-- [ ] Suite `run` recorded (prove | observe-source | observe-target)
+- [ ] One- or two-sided connections recorded; suite `checks[]` listed
 - [ ] Unsupported kinds listed as blockers for Prover

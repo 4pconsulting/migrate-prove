@@ -6,5 +6,7 @@ target:
   url: sqlite:///../pipeline.db
 output_dir: ../artifacts/hop_02
 continue_on_fail: true
-# Thin gate: schema + totals only — mirrors hop-only "validation" that misses business mapping.
-levels: ["1", "2"]
+checks:
+  - id: customers.count
+    kind: count
+    entity: customers

@@ -46,24 +46,9 @@ def write_html(report: RunReport, contract: Contract, path: Path) -> None:
     critical = report.critical_failed(contract)
     rows = [_render_result_row(item) for item in report.results]
     body_rows = "\n".join(rows)
-    observations = report.observation_exports()
-    if observations:
-        obs_items = "".join(
-            f"<li><code>{_esc(str(item.get('path') or ''))}</code>"
-            f" — {item.get('row_count', 0)} row(s)"
-            f" ({_esc(str(item.get('entity') or ''))})</li>"
-            for item in observations
-        )
-        observation_section = (
-            f'<h2>Observations</h2><ul class="muted">{obs_items}</ul>'
-            f'<p class="muted">Run: {_esc(report.run)}'
-            f" — pairwise checks are skipped for manual reconciliation.</p>"
-        )
-    else:
-        observation_section = ""
     banner_ok = (
-        "Observation export complete. Pairwise prove checks were skipped."
-        if report.is_observe and not report.failed
+        "All hard checks passed. Review WARN rows for schema/row-smoke drift before cutover."
+        if report.warned and not report.failed
         else "All executed checks passed. Target matches the migration contract within this run."
     )
     banner_fail = "Cutover is not proven: critical or contract checks failed."
@@ -169,9 +154,9 @@ def write_html(report: RunReport, contract: Contract, path: Path) -> None:
     <div class="card"><span class="muted">Checks</span><strong>{report.total}</strong></div>
     <div class="card"><span class="muted">Passed</span><strong>{report.passed}</strong></div>
     <div class="card"><span class="muted">Failed</span><strong>{report.failed}</strong></div>
+    <div class="card"><span class="muted">Warned</span><strong>{report.warned}</strong></div>
     <div class="card"><span class="muted">Skipped</span><strong>{report.skipped}</strong></div>
   </div>
-  {observation_section}
   <h2>Results</h2>
   <div class="scorecard">
     <div class="scorecard-head">
@@ -466,10 +451,5 @@ def print_console(report: RunReport) -> None:
     console.print(table)
     console.print(
         f"[bold]{report.passed}/{report.total} passed[/] · "
-        f"{report.failed} failed · {report.skipped} skipped"
+        f"{report.failed} failed · {report.warned} warned · {report.skipped} skipped"
     )
-    for obs in report.observation_exports():
-        console.print(
-            f"[cyan]observe[/] {obs.get('entity')}: {obs.get('path')} "
-            f"({obs.get('row_count')} rows)"
-        )

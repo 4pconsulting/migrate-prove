@@ -1,16 +1,18 @@
 ---
 name: prove-probes
 description: >-
-  Configures migrate-prove failure-mode probes on STM entities (truncation,
-  precision, leading_zeros, charset, null_empty_literal). Use when authoring
-  edge-case checks for first landings or critical entities.
+  Configures migrate-prove failure-mode probes as suite checks (truncation,
+  precision, leading_zeros, charset, null_empty_literal). Mapping constraints
+  (max_length, decimal_places) stay on the STM.
 ---
 
 # prove-probes
 
 ## Goal
 
-Hunt known edge-case defects that totals and schemas miss.
+Hunt known edge-case defects that totals and schemas miss (hard FAIL).
+
+Auto schema WARN + row smoke already soft-check mapping constraints; use `kind: probes` when you want a gate.
 
 ## Probe types
 
@@ -22,28 +24,18 @@ Hunt known edge-case defects that totals and schemas miss.
 | `charset` | Non-ASCII corrupted in transit |
 | `null_empty_literal` | NULL / `""` / `"NULL"` / `"N/A"` vs normalize policy |
 
-## STM fragment
+## Suite fragment
 
 ```yaml
-failure_probes:
-  - truncation
-  - precision
-  - leading_zeros
-  - charset
-  - null_empty_literal
+checks:
+  - id: customers.probes
+    kind: probes
+    entity: customers
+    probes: [truncation, precision, leading_zeros, charset, null_empty_literal]
 ```
 
 ## When to include
 
-- **Hop (raw → staging):** prefer all probes that match the hop’s risk
+- **Hop (raw → staging):** prefer probes that match the hop’s risk
 - **E2E critical entities:** include probes relevant to mapped types
 - Skip probes that cannot apply (e.g. no decimals → skip `precision`)
-
-## Concern
-
-**transformation**
-
-## Do not
-
-- Enable every probe blindly on high_volume entities without risk discussion
-- Confuse probes with L4 transform equality — probes are edge-mode hunts

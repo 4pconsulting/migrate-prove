@@ -86,11 +86,11 @@ Open `examples/banking_demo/artifacts/report.html`. Totals may pass while slices
 
 ## Rules of the road
 
-- STM YAML is the oracle; agents author YAML, not ad-hoc pytest/SQL test suites.
+- STM YAML is the mapping oracle; the suite owns `checks[]`. Agents author YAML, not ad-hoc pytest/SQL test suites.
 - Never put passwords or tokens in suite/STM YAML — `${VAR}` only.
-- Do not invent financial tolerances; defer L3 / exclude `"3"` from `levels` until agreed.
+- Do not invent financial tolerances; omit `sum` / `group_sum` checks until stakeholders agree.
 - Cap connectors to what the package supports today (`sqlalchemy`, `salesforce_mock`, `salesforce`, `http`); mark other kinds as blockers.
-- Use suite `run: observe-source` / `observe-target` for one-sided export; use `source_parts` / `target_parts` when one grain is split across objects.
+- One-sided prove: omit unused connection and keep `checks[]` (emit PASS + evidence). Use `source_parts` / `target_parts` when one grain is split across objects.
 - Hop contracts stay thin; e2e carries the cutover claim — see [`ASSURANCE.md`](ASSURANCE.md).
 
 ## Further reading

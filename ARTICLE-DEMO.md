@@ -30,11 +30,11 @@ The pieces map directly onto the article's sections:
 
 | Article section | Code |
 | --- | --- |
-| 1 The migration contract | [`contract.py`](src/migrate_prove/contract.py), [`models.py`](src/migrate_prove/models.py) |
-| 2 Five-layer validation | [`checks.py`](src/migrate_prove/checks.py), [`engine.py`](src/migrate_prove/engine.py) |
-| 3 Row-level hashing | [`hashing.py`](src/migrate_prove/hashing.py) |
-| 4 Risk-calibrated sampling | `sample:` block on each entity, [`sampling.py`](src/migrate_prove/sampling.py) |
-| 5 Known failure modes | `failure_probes:` in the contract, evaluated in `checks.py` |
+| 1 The migration contract | STM [`stm.yaml`](examples/banking_demo/stm.yaml) + [`models.py`](src/migrate_prove/models.py) |
+| 2 Layered validation | Suite [`checks[]`](examples/banking_demo/suite.yaml) + [`suite_checks.py`](src/migrate_prove/suite_checks.py), [`engine.py`](src/migrate_prove/engine.py) |
+| 3 Row-level hashing | Suite `kind: hash` → [`hashing.py`](src/migrate_prove/hashing.py) |
+| 4 Risk-calibrated sampling | Suite `row_sample` / future [`sampling.py`](src/migrate_prove/sampling.py); `risk` on entities still drives scorecard callouts |
+| 5 Known failure modes | Suite `kind: probes` (+ auto schema WARN / row smoke from STM `max_length` / `nullable`) |
 | 6 Migration/transformation/reconciliation tags | `concern` tagging on every `CheckResult` |
 | 8 Automated pipeline + scorecard | [`engine.py`](src/migrate_prove/engine.py), [`reporting.py`](src/migrate_prove/reporting.py) |
 
@@ -44,9 +44,9 @@ The rest of this document walks through building and running the demo end to end
 
 ## 2. The contract is a YAML file
 
-The article insists the STM must be *executable*, rather than an Excel sheet nobody re-reads after week one. In this codebase that means one file: [`examples/banking_demo/stm.yaml`](examples/banking_demo/stm.yaml).
+The article insists the STM must be *executable*, rather than an Excel sheet nobody re-reads after week one. In this codebase the **mapping oracle** is [`examples/banking_demo/stm.yaml`](examples/banking_demo/stm.yaml); the **test plan** is [`examples/banking_demo/suite.yaml`](examples/banking_demo/suite.yaml).
 
-An entity in that file carries everything the five layers need to check it:
+STM entity (mapping only):
 
 ```yaml
 entities:
@@ -55,14 +55,6 @@ entities:
     target_table: customers
     business_key: [customer_id]
     risk: critical
-    failure_probes:
-      - truncation
-      - precision
-      - leading_zeros
-      - charset
-      - null_empty_literal
-    volume_slices:
-      - [status]
     mappings:
       - source: Status
         target: status
@@ -71,21 +63,37 @@ entities:
           A: Active
           S: Suspended
           C: Closed
-    metrics:
-      - name: total_balance
-        source_sql: SUM(Balance)
-        target_sql: SUM(current_balance)
-        tolerance_abs: 0.0001
-    invariants:
-      - name: temporal_integrity
-        kind: temporal
-        columns: [created_at, updated_at]
-        expect: 0
+      - source: Name
+        target: customer_name
+        max_length: 40
 ```
 
-Reading that against the article's mapping-dimension table (direct projections, transformations, type coercions, nullability, cardinality, surrogate keys) and we'll see that every row has a home: `mappings.kind: direct|transform|coerce`, `failure_probes`, `volume_slices`, `business_key`. `risk: critical` is the risk-calibration from #4 - basically it decides sampling strategy and which failures get called out on the HTML scorecard as blocking.
+Suite checks (what this rehearsal proves):
 
-`migrate-prove compile examples/banking_demo/stm.yaml` does nothing more than load this file through [`load_contract()`](src/migrate_prove/contract.py) and confirm it parses into valid `Entity` objects (a cheap, fast sanity check before you ever touch a database).
+```yaml
+checks:
+  - id: customers.by_status
+    kind: group_count
+    entity: customers
+    dimensions: [status]
+  - id: customers.balance_sum
+    kind: sum
+    entity: customers
+    field: Balance
+    tolerance_abs: 0.0001
+  - id: customers.probes
+    kind: probes
+    entity: customers
+    probes: [truncation, precision, leading_zeros, charset, null_empty_literal]
+  - id: customers.temporal
+    kind: invariant
+    entity: customers
+    invariant: { kind: temporal, columns: [created_at, updated_at], expect: 0 }
+```
+
+Mapping dimensions (`mappings.kind`, `business_key`, `max_length`) stay on the STM; cardinality, probes, and invariants are suite checks. `risk: critical` still drives which failures the HTML scorecard calls out first.
+
+`migrate-prove compile examples/banking_demo/stm.yaml` loads the STM through [`load_contract()`](src/migrate_prove/contract.py) and confirms it parses into valid `Entity` objects (a cheap sanity check before you touch a database).
 
 A suite file is the second half of the contract: which contract, and which two databases.
 

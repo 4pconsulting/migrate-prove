@@ -1,3 +1,5 @@
+"""One-sided prove: emit query results when only one connection is present."""
+
 from pathlib import Path
 
 import pytest
@@ -5,7 +7,7 @@ from pydantic import ValidationError
 
 from migrate_prove.connectors import SqlAlchemyConnector
 from migrate_prove.engine import ValidationEngine
-from migrate_prove.models import CheckStatus, Contract, Entity, SuiteConfig
+from migrate_prove.models import CheckStatus, Contract, Entity, SuiteCheck, SuiteConfig
 
 
 def _entity() -> Entity:
@@ -32,7 +34,12 @@ def _seed(db: Path) -> None:
     conn.engine.dispose()
 
 
-def test_prove_requires_both_connections():
+def test_suite_requires_at_least_one_connection():
+    with pytest.raises(ValidationError):
+        SuiteConfig.model_validate({"name": "x", "contract": "stm.yaml"})
+
+
+def test_legacy_run_levels_rejected():
     with pytest.raises(ValidationError):
         SuiteConfig.model_validate(
             {
@@ -40,109 +47,88 @@ def test_prove_requires_both_connections():
                 "contract": "stm.yaml",
                 "run": "prove",
                 "source": {"url": "sqlite:///a.db"},
+                "target": {"url": "sqlite:///b.db"},
             }
         )
-
-
-def test_observe_target_requires_target_connection():
     with pytest.raises(ValidationError):
         SuiteConfig.model_validate(
             {
                 "name": "x",
                 "contract": "stm.yaml",
-                "run": "observe-target",
-                "source": {"url": "sqlite:///a.db"},
-            }
-        )
-    suite = SuiteConfig.model_validate(
-        {
-            "name": "x",
-            "contract": "stm.yaml",
-            "run": "observe-target",
-            "target": {"url": "sqlite:///t.db"},
-        }
-    )
-    assert suite.source is None
-    assert suite.target is not None
-    assert suite.observe_side == "target"
-    assert suite.is_observe
-
-
-def test_legacy_mode_observe_side_maps_to_run():
-    suite = SuiteConfig.model_validate(
-        {
-            "name": "x",
-            "contract": "stm.yaml",
-            "mode": "observe",
-            "observe_side": "source",
-            "source": {"url": "sqlite:///s.db"},
-        }
-    )
-    assert suite.run == "observe-source"
-
-
-def test_legacy_and_run_together_rejected():
-    with pytest.raises(ValidationError):
-        SuiteConfig.model_validate(
-            {
-                "name": "x",
-                "contract": "stm.yaml",
-                "run": "prove",
-                "mode": "prove",
+                "levels": ["1", "2"],
                 "source": {"url": "sqlite:///a.db"},
                 "target": {"url": "sqlite:///b.db"},
             }
         )
 
 
-def test_observe_target_exports_and_skips_pairwise(tmp_path: Path):
+def test_one_sided_target_suite_ok():
+    suite = SuiteConfig.model_validate(
+        {
+            "name": "x",
+            "contract": "stm.yaml",
+            "target": {"url": "sqlite:///t.db"},
+            "checks": [{"id": "a.count", "kind": "count", "entity": "accounts"}],
+        }
+    )
+    assert suite.source is None
+    assert suite.target is not None
+
+
+def test_one_sided_count_emits_pass(tmp_path: Path):
     db = tmp_path / "obs.db"
     _seed(db)
     url = f"sqlite:///{db.as_posix()}"
     target = SqlAlchemyConnector(url, name="target")
-    out = tmp_path / "artifacts"
-    engine = ValidationEngine(
+    checks = [
+        SuiteCheck(id="accounts.count", kind="count", entity="accounts"),
+    ]
+    report = ValidationEngine(
         None,
         target,
-        run="observe-target",
-        output_dir=out,
-    )
-    report = engine.run(
-        Contract(name="obs", entities=[_entity()]),
-        levels=["1", "2", "4", "hash", "5"],
-    )
-    assert report.failed == 0
-    assert report.run == "observe-target"
-    exports = report.observation_exports()
-    assert len(exports) == 1
-    path = Path(exports[0]["path"])
-    assert path.exists()
-    assert exports[0]["row_count"] == 2
-
-    statuses = {item.level: item.status for item in report.results if item.level != "observe"}
-    assert statuses["1"] == CheckStatus.SKIP
-    assert statuses["2"] == CheckStatus.SKIP
-    assert statuses["4"] == CheckStatus.SKIP
-    assert statuses["hash"] == CheckStatus.SKIP
-    observe = next(item for item in report.results if item.level == "observe")
-    assert observe.status == CheckStatus.PASS
-    assert observe.evidence.get("sample")
-    assert observe.actual["row_count"] == 2
-    assert "row_count=2" in observe.message
-    assert "sample=" in observe.message
+        schema_check=False,
+        row_smoke_n=None,
+    ).run(Contract(name="obs", entities=[_entity()]), checks=checks)
+    by_id = {item.id: item for item in report.results}
+    assert by_id["accounts.count"].status == CheckStatus.PASS
+    assert by_id["accounts.count"].actual == 2
+    assert by_id["accounts.count"].evidence.get("output", {}).get("side") == "target"
+    assert "one-sided" in by_id["accounts.count"].message
 
 
-def test_observe_source_skips_invariants(tmp_path: Path):
+def test_one_sided_source_emits_pass(tmp_path: Path):
     db = tmp_path / "obs.db"
     _seed(db)
     url = f"sqlite:///{db.as_posix()}"
     source = SqlAlchemyConnector(url, name="source")
-    report = ValidationEngine(
-        source,
-        None,
-        run="observe-source",
-        output_dir=tmp_path / "artifacts",
-    ).run(Contract(name="obs", entities=[_entity()]), levels=["observe", "5"])
-    assert any(
-        item.level == "5" and item.status == CheckStatus.SKIP for item in report.results
+    checks = [SuiteCheck(id="accounts.count", kind="count", entity="accounts")]
+    report = ValidationEngine(source, None, schema_check=False, row_smoke_n=None).run(
+        Contract(name="obs", entities=[_entity()]), checks=checks
     )
+    assert report.results[0].status == CheckStatus.PASS
+    assert report.results[0].evidence["output"]["side"] == "source"
+
+
+def test_invariant_skipped_without_target(tmp_path: Path):
+    db = tmp_path / "obs.db"
+    _seed(db)
+    url = f"sqlite:///{db.as_posix()}"
+    source = SqlAlchemyConnector(url, name="source")
+    checks = [
+        SuiteCheck.model_validate(
+            {
+                "id": "accounts.temporal",
+                "kind": "invariant",
+                "entity": "accounts",
+                "invariant": {
+                    "kind": "temporal",
+                    "columns": ["External_Id__c", "Name"],
+                    "expect": 0,
+                },
+            }
+        )
+    ]
+    report = ValidationEngine(source, None, schema_check=False, row_smoke_n=None).run(
+        Contract(name="obs", entities=[_entity()]), checks=checks
+    )
+    assert report.results[0].status == CheckStatus.SKIP

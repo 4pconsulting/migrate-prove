@@ -6,4 +6,22 @@ target:
   url: sqlite:///../pipeline.db
 output_dir: ../artifacts/e2e
 continue_on_fail: true
-levels: ["1", "2", "3", "4", "hash"]
+checks:
+  - id: customers.count
+    kind: count
+    entity: customers
+  - id: customers.by_status
+    kind: group_count
+    entity: customers
+    dimensions: [status]
+  - id: customers.balance_sum
+    kind: sum
+    entity: customers
+    field: Balance
+    tolerance_abs: 0.01
+  - id: customers.transforms
+    kind: transforms
+    entity: customers
+  - id: customers.hash
+    kind: hash
+    entity: customers

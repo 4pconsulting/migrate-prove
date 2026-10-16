@@ -6,4 +6,64 @@ target:
   url: sqlite:///target.db
 output_dir: artifacts
 continue_on_fail: true
-levels: ["1", "probes", "2", "3", "4", "hash", "5"]
+checks:
+  - id: customers.count
+    kind: count
+    entity: customers
+
+  - id: customers.by_status
+    kind: group_count
+    entity: customers
+    dimensions: [status]
+
+  - id: customers.balance_sum
+    kind: sum
+    entity: customers
+    field: Balance
+    tolerance_abs: 0.0001
+
+  - id: customers.account_count_metric
+    kind: count
+    entity: customers
+
+  - id: customers.balance_by_status
+    kind: group_sum
+    entity: customers
+    field: Balance
+    dimensions: [status]
+    tolerance_abs: 0.01
+
+  - id: customers.transforms
+    kind: transforms
+    entity: customers
+    fields: [status, risk_tier]
+
+  - id: customers.hash
+    kind: hash
+    entity: customers
+
+  - id: customers.probes
+    kind: probes
+    entity: customers
+    probes: [truncation, precision, leading_zeros, charset, null_empty_literal]
+
+  - id: customers.temporal
+    kind: invariant
+    entity: customers
+    invariant:
+      name: temporal_integrity
+      kind: temporal
+      columns: [created_at, updated_at]
+      expect: 0
+
+  - id: order_items.orphans
+    kind: invariant
+    entity: order_items
+    invariant:
+      name: no_orphan_items
+      kind: orphans
+      child_table: order_items
+      child_key: order_id
+      parent_table: orders
+      parent_key: order_id
+      expect: 0

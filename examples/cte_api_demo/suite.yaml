@@ -1,4 +1,4 @@
-name: cte-api-cutover
+name: cte-api-demo
 contract: stm.yaml
 source:
   url: sqlite:///source.db
@@ -7,4 +7,42 @@ target:
   fixtures: fixtures/salesforce
 output_dir: artifacts
 continue_on_fail: true
-levels: ["1", "2", "3", "4", "5", "hash"]
+checks:
+  - id: accounts.count
+    kind: count
+    entity: accounts
+
+  - id: accounts.by_status
+    kind: group_count
+    entity: accounts
+    dimensions: [Status__c]
+
+  - id: accounts.balance_sum
+    kind: sum
+    entity: accounts
+    field: Balance
+    tolerance_abs: 0.01
+
+  - id: accounts.balance_by_status
+    kind: group_sum
+    entity: accounts
+    field: Balance
+    dimensions: [Status__c]
+    tolerance_abs: 0.01
+
+  - id: accounts.transforms
+    kind: transforms
+    entity: accounts
+
+  - id: accounts.hash
+    kind: hash
+    entity: accounts
+
+  - id: accounts.temporal
+    kind: invariant
+    entity: accounts
+    invariant:
+      name: temporal_integrity
+      kind: temporal
+      columns: [CreatedDate, Updated_At__c]
+      expect: 0

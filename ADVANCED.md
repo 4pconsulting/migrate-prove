@@ -1,4 +1,4 @@
-# Advanced usage: CTE sources, multi-part relations, observe mode, and API targets
+# Advanced usage: CTE sources, multi-part relations, one-sided prove, and API targets
 
 migrate-prove’s oracle is always the same:
 
@@ -61,9 +61,9 @@ Rules:
 - Provide **exactly one** of `source_table` | `source_sql` | `source_parts`.
 - Provide **exactly one** of `target_table` | `target_sql` | `target_parts`.
 - Project **aliases the mappings refer to** (`CustID`, `Balance`, …). The engine does not know about base tables inside the CTE.
-- Watch **grain**: joins can inflate or collapse rows. Volume, hash keys, and metrics must match the intended business key after the CTE.
-- `filter_source` remains a SQL `WHERE` fragment applied **outside** the CTE wrapper.
-- L1 schema for CTE sources is inferred from `SELECT * FROM (source_sql) … LIMIT 0` (column names), not from a physical table catalog.
+- Watch **grain**: joins can inflate or collapse rows. Suite count/hash/sum checks must match the intended business key after the CTE.
+- Batch filters belong on suite checks (`filter.source` / `filter.target`), applied **outside** the CTE wrapper.
+- Schema for CTE sources is inferred from `SELECT * FROM (source_sql) … LIMIT 0` (column names), not from a physical table catalog.
 
 Alternative without `source_sql`: materialise a view/staging table and point `source_table` at it (or prove the join as a hop — see [ASSURANCE.md](ASSURANCE.md)).
 
@@ -74,6 +74,7 @@ Alternative without `source_sql`: materialise a view/staging table and point `so
 Use when one STM grain is split across physical objects (e.g. personal vs business accounts) and you need a single comparable row set:
 
 ```yaml
+# STM — mapping only
 entities:
   - name: accounts
     source_table: Customer
@@ -81,39 +82,37 @@ entities:
       - table: Account_Personal
       - table: Account_Business
     business_key: [External_Id__c]
-    volume_slices:
-      - [Status__c]
     mappings:
       - source: CustID
         target: External_Id__c
       - source: Status
         target: Status__c
         lookup: { A: Active, C: Closed }
+
+# suite.yaml — volume slice lives here
+checks:
+  - id: accounts.by_status
+    kind: group_count
+    entity: accounts
+    dimensions: [Status__c]
 ```
 
 Rules:
 
 - Each part is `{ table: … }` or `{ sql: … }` (optional `schema`).
-- All parts must expose the **mapped / key / slice columns**; L1 fails if any part is missing a required column.
+- All parts must expose the **mapped / key / slice columns**; schema checks fail if any part is missing a required column.
 - Counts and grouped aggregates **sum across parts**; row-level checks see the concatenated set.
-- L5 `orphans` / raw `sql` require a **single** target relation — use `target_sql` with a SQL `UNION ALL` when you need joins on SQLAlchemy.
+- Suite `invariant` orphans / raw `sql` require a **single** target relation — use `target_sql` with a SQL `UNION ALL` when you need joins on SQLAlchemy.
 
 ---
 
-## Observe runs (one-sided export)
+## One-sided prove (omit a connection)
 
-Suite `run` declares intent (no CLI override):
-
-| `run` | Required connection | Purpose |
-| --- | --- | --- |
-| `prove` | source + target | Full reconciliation |
-| `observe-target` | target | Export target for manual reconcile |
-| `observe-source` | source | Export source for manual reconcile |
+There is no separate observe mode. Omit `source` or `target` in the suite; declare the same `checks` you would for a full prove.
 
 ```yaml
-name: accounts-observe-target
+name: accounts-target-spotcheck
 contract: stm.yaml
-run: observe-target
 target:
   kind: salesforce
   url: ${SALESFORCE_URL}
@@ -121,20 +120,44 @@ target:
   client_id: ${SALESFORCE_CLIENT_ID}
   client_secret: ${SALESFORCE_CLIENT_SECRET}
 # source omitted
-output_dir: artifacts
-levels: ["1", "2", "4", "hash"]
+checks:
+  - id: accounts.count
+    kind: count
+    entity: accounts
+  - id: accounts.by_status
+    kind: group_count
+    entity: accounts
+    dimensions: [Status__c]
 ```
 
 Behaviour:
 
 1. Builds only the live connector
-2. Writes `artifacts/observe/{entity}.{side}.ndjson` plus a `.meta.json` sidecar (row count, columns, filter)
-3. Pairwise checks (L1–L4, hash) are **SKIP** with a clear message
-4. L5 runs only for `run: observe-target` with a single target relation
+2. Checks that can run on that side **PASS** and put query output in `evidence.output` / `sample`
+3. Checks that need the missing side (e.g. `invariant` without target, `hash` without both) **SKIP**
+4. Automatic schema WARN still runs on the live side unless `--no-schema-check`
 
-Exit code 0 when export succeeds and nothing ERRORs/FAILs (SKIP alone is success).
+Exit code 0 when nothing FAILs/ERRORs (WARN and SKIP alone are success).
 
-Deprecated aliases still accepted: `mode: observe` + `observe_side: target|source` → mapped to `run`.
+### Suite checks vs STM
+
+Put batch filters and unmapped dimensions on the **check**, not the STM:
+
+```yaml
+params:
+  load_type: FULL
+checks:
+  - id: accounts.count_batch
+    kind: count
+    entity: accounts
+    filter:
+      source: "load_type = '${load_type}'"
+      target: "Load_Type__c = '${load_type}'"
+    dimensions:
+      - Status__c
+      - field: load_date
+        side: target
+```
 
 ---
 
@@ -192,7 +215,7 @@ Flow:
 
 1. `POST {url}/services/oauth2/token` with `grant_type=client_credentials`
 2. Use `access_token` + token response `instance_url` for Describe / Query
-3. **Row fetches** (`fetch_rows` — L4 / HASH / observe): follow `nextRecordsUrl` until `done`; rows spill to NDJSON on disk (default buffer **5000**)
+3. **Row fetches** (`fetch_rows` — transforms / hash / row_sample): follow `nextRecordsUrl` until `done`; rows spill to NDJSON on disk (default buffer **5000**)
 4. **Aggregates** (L2 volume / L3 metrics): SOQL pushdown — `COUNT()`, `COUNT(Id) … GROUP BY`, `SUM(field)` — without downloading every row. Falls back to in-process only if the expression/dimensions are not pushable (e.g. non-field `dimension_sql`)
 
 API version ≥ 51 uses `SELECT FIELDS(ALL)` for row fetches; older versions select described field names (capped).

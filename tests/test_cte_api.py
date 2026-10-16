@@ -115,8 +115,13 @@ def test_cte_api_demo_catches_status_slice(tmp_path: Path):
         "target",
     )
     assert source_relation(stm.entities[0]).sql is not None
-    report = ValidationEngine(source, target).run(stm, levels=suite.levels)
+    report = ValidationEngine(source, target, schema_check=False, row_smoke_n=None).run(
+        stm, checks=suite.checks
+    )
     by_id = {item.id: item for item in report.results}
-    assert by_id["L2.accounts.volume.total"].status == CheckStatus.PASS
-    assert by_id["L2.accounts.volume.by_Status__c"].status == CheckStatus.FAIL
+    assert by_id["accounts.count"].status == CheckStatus.PASS
+    assert by_id["accounts.by_status"].status == CheckStatus.FAIL
+    assert by_id["accounts.balance_sum"].status in {CheckStatus.PASS, CheckStatus.FAIL}
+    assert "accounts.balance_sum" in by_id
+    assert any(item.id.startswith("accounts.transforms.") for item in report.results)
     assert report.failed > 0
