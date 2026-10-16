@@ -27,7 +27,9 @@ jobs:
 
       - name: Install wheel and test
         run: |
-          python -m pip install dist/*.whl pytest
+          # [http] pulls httpx+jmespath required by live Salesforce / HTTP connector tests
+          WHEEL=$(echo dist/*.whl)
+          python -m pip install "${WHEEL}[http]" pytest
           pytest -o pythonpath=
 
   publish:
