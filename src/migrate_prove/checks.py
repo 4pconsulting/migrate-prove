@@ -15,7 +15,18 @@ from migrate_prove.models import (
 )
 from migrate_prove.normalize import canonicalize
 from migrate_prove.rules import apply_mapping
-from migrate_prove.sql import mapped_dimension_sql, source_relation, target_relation
+from migrate_prove.sql import (
+    aggregate_concat,
+    aggregate_grouped_concat,
+    count_concat,
+    fetch_concat,
+    group_count_concat,
+    inspect_relations,
+    mapped_dimension_sql,
+    missing_columns_on_parts,
+    source_relations,
+    target_relations,
+)
 
 
 def _slice_label(key: tuple) -> str:
@@ -68,14 +79,16 @@ def _within_tolerance(expected: float, actual: float, abs_tol: float, pct_tol: f
 
 
 def _is_api_dialect(connector: Connector) -> bool:
-    return connector.dialect_name() == "salesforce"
+    return connector.dialect_name() in {"salesforce", "http"}
 
 
 def check_schema(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
     results: list[CheckResult] = []
+    src_refs = source_relations(entity)
+    tgt_refs = target_relations(entity)
     try:
-        source_info = source.inspect_relation(source_relation(entity))
-        target_info = target.inspect_relation(target_relation(entity))
+        source_info = inspect_relations(source, src_refs)
+        target_info = inspect_relations(target, tgt_refs)
     except Exception as exc:
         return [
             _ok(
@@ -89,14 +102,26 @@ def check_schema(entity: Entity, source: Connector, target: Connector) -> list[C
             )
         ]
 
-    missing_source = [
-        mapping.source
-        for mapping in entity.mappings
-        if mapping.source and mapping.source not in source_info.columns
-    ]
-    missing_target = [
-        mapping.target for mapping in entity.mappings if mapping.target not in target_info.columns
-    ]
+    required_source = [mapping.source for mapping in entity.mappings if mapping.source]
+    required_target = [mapping.target for mapping in entity.mappings]
+    source_part_gaps = missing_columns_on_parts(source, src_refs, required_source)
+    target_part_gaps = missing_columns_on_parts(target, tgt_refs, required_target)
+    missing_source = sorted(
+        {col for cols in source_part_gaps.values() for col in cols}
+        | {
+            mapping.source
+            for mapping in entity.mappings
+            if mapping.source and mapping.source not in source_info.columns
+        }
+    )
+    missing_target = sorted(
+        {col for cols in target_part_gaps.values() for col in cols}
+        | {
+            mapping.target
+            for mapping in entity.mappings
+            if mapping.target not in target_info.columns
+        }
+    )
     results.append(
         _ok(
             id=f"L1.{entity.name}.columns",
@@ -106,7 +131,12 @@ def check_schema(entity: Entity, source: Connector, target: Connector) -> list[C
             concern=Concern.migration,
             status=CheckStatus.FAIL if missing_source or missing_target else CheckStatus.PASS,
             expected={"source_missing": [], "target_missing": []},
-            actual={"source_missing": missing_source, "target_missing": missing_target},
+            actual={
+                "source_missing": missing_source,
+                "target_missing": missing_target,
+                "source_part_gaps": source_part_gaps,
+                "target_part_gaps": target_part_gaps,
+            },
             message=(
                 "Missing columns on source or target"
                 if missing_source or missing_target
@@ -140,10 +170,10 @@ def check_schema(entity: Entity, source: Connector, target: Connector) -> list[C
 
 
 def check_volume(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
-    src = source_relation(entity)
-    tgt = target_relation(entity)
-    source_count = source.count_rows(src, entity.filter_source)
-    target_count = target.count_rows(tgt, entity.filter_target)
+    src = source_relations(entity)
+    tgt = target_relations(entity)
+    source_count = count_concat(source, src, entity.filter_source)
+    target_count = count_concat(target, tgt, entity.filter_target)
     results = [
         _ok(
             id=f"L2.{entity.name}.volume.total",
@@ -168,10 +198,10 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
             dim: mapped_dimension_sql(source, entity, dim) for dim in dimensions
         }
         # API targets cannot evaluate SQL CASE lookups; group on projected field names.
-        source_groups = source.group_count(
-            src, dimensions, entity.filter_source, source_dim_sql
+        source_groups = group_count_concat(
+            source, src, dimensions, entity.filter_source, source_dim_sql
         )
-        target_groups = target.group_count(tgt, dimensions, entity.filter_target)
+        target_groups = group_count_concat(target, tgt, dimensions, entity.filter_target)
         source_map = {
             tuple(row[dim] for dim in dimensions): int(row["row_count"]) for row in source_groups
         }
@@ -219,8 +249,8 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
 
 def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
     results: list[CheckResult] = []
-    src = source_relation(entity)
-    tgt = target_relation(entity)
+    src = source_relations(entity)
+    tgt = target_relations(entity)
     for metric in entity.metrics:
         if metric.group_by:
             source_dim_sql = {
@@ -228,7 +258,8 @@ def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[
             }
             source_rows = {
                 tuple(row[dim] for dim in metric.group_by): float(row["metric"] or 0)
-                for row in source.aggregate_grouped(
+                for row in aggregate_grouped_concat(
+                    source,
                     src,
                     metric.source_sql,
                     metric.group_by,
@@ -239,7 +270,8 @@ def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[
             target_dim_sql = None if _is_api_dialect(target) else None
             target_rows = {
                 tuple(row[dim] for dim in metric.group_by): float(row["metric"] or 0)
-                for row in target.aggregate_grouped(
+                for row in aggregate_grouped_concat(
+                    target,
                     tgt,
                     metric.target_sql,
                     metric.group_by,
@@ -278,8 +310,8 @@ def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[
             )
             continue
 
-        source_value = source.aggregate(src, metric.source_sql, entity.filter_source)
-        target_value = target.aggregate(tgt, metric.target_sql, entity.filter_target)
+        source_value = aggregate_concat(source, src, metric.source_sql, entity.filter_source)
+        target_value = aggregate_concat(target, tgt, metric.target_sql, entity.filter_target)
         expected = float(source_value or 0)
         actual = float(target_value or 0)
         ok = _within_tolerance(expected, actual, metric.tolerance_abs, metric.tolerance_pct)
@@ -310,9 +342,9 @@ def _expected_row(source_row: dict[str, Any], entity: Entity) -> dict[str, Any]:
 
 
 def check_transforms(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
-    source_rows = source.fetch_rows(source_relation(entity), entity.filter_source)
+    source_rows = fetch_concat(source, source_relations(entity), entity.filter_source)
     target_rows = _index_by_key(
-        target.fetch_rows(target_relation(entity), entity.filter_target),
+        fetch_concat(target, target_relations(entity), entity.filter_target),
         entity.business_key,
     )
     mismatches: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -375,9 +407,9 @@ def check_transforms(entity: Entity, source: Connector, target: Connector) -> li
 
 def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> list[CheckResult]:
     hash_fields = [m for m in entity.mappings if m.in_hash and m.kind != MappingKind.surrogate]
-    source_rows = source.fetch_rows(source_relation(entity), entity.filter_source)
+    source_rows = fetch_concat(source, source_relations(entity), entity.filter_source)
     target_rows = _index_by_key(
-        target.fetch_rows(target_relation(entity), entity.filter_target),
+        fetch_concat(target, target_relations(entity), entity.filter_target),
         entity.business_key,
     )
     source_keys = set()
@@ -472,35 +504,31 @@ def _temporal_count_sql(connector: Connector, ref: RelationRef, columns: list[st
     )
 
 
-def _temporal_count_rows(
-    connector: Connector, ref: RelationRef, columns: list[str], extra_where: str | None
-) -> int:
-    rows = connector.fetch_rows(ref, extra_where)
-    bad = 0
-    for row in rows:
-        for left, right in zip(columns, columns[1:], strict=False):
-            left_val, right_val = row.get(left), row.get(right)
-            if left_val is not None and right_val is not None and right_val < left_val:
-                bad += 1
-                break
-    return bad
-
-
 def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
     results: list[CheckResult] = []
-    tgt = target_relation(entity)
+    tgt_refs = target_relations(entity)
+    multi_target = len(tgt_refs) > 1
     for invariant in entity.invariants:
         evidence: dict[str, Any] = {}
         if invariant.kind == "temporal":
-            if _is_api_dialect(target):
-                numeric = _temporal_count_rows(target, tgt, invariant.columns, entity.filter_target)
-                evidence = {"mode": "in_process", "columns": invariant.columns}
+            if multi_target or _is_api_dialect(target):
+                rows = fetch_concat(target, tgt_refs, entity.filter_target)
+                bad = 0
+                for row in rows:
+                    for left, right in zip(invariant.columns, invariant.columns[1:], strict=False):
+                        left_val, right_val = row.get(left), row.get(right)
+                        if left_val is not None and right_val is not None and right_val < left_val:
+                            bad += 1
+                            break
+                numeric = bad
+                evidence = {"mode": "in_process", "columns": invariant.columns, "parts": len(tgt_refs)}
             else:
+                tgt = tgt_refs[0]
                 sql = _temporal_count_sql(target, tgt, invariant.columns, entity.filter_target)
                 numeric = target.scalar(sql)
                 evidence = {"sql": sql}
         elif invariant.kind == "orphans":
-            if _is_api_dialect(target):
+            if multi_target or _is_api_dialect(target):
                 results.append(
                     _ok(
                         id=f"L5.{entity.name}.invariant.{invariant.name}",
@@ -509,7 +537,10 @@ def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
                         entity=entity.name,
                         concern=invariant.concern,
                         status=CheckStatus.SKIP,
-                        message="Orphan invariants require SQL joins; skipped on API targets",
+                        message=(
+                            "Orphan invariants require a single SQL target relation; "
+                            "skipped for multi-part or API targets"
+                        ),
                     )
                 )
                 continue
@@ -524,7 +555,7 @@ def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
             numeric = target.scalar(sql)
             evidence = {"sql": sql}
         else:
-            if _is_api_dialect(target):
+            if multi_target or _is_api_dialect(target):
                 results.append(
                     _ok(
                         id=f"L5.{entity.name}.invariant.{invariant.name}",
@@ -533,7 +564,10 @@ def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
                         entity=entity.name,
                         concern=invariant.concern,
                         status=CheckStatus.SKIP,
-                        message="Raw SQL invariants are not supported on API targets",
+                        message=(
+                            "Raw SQL invariants require a single SQL target relation; "
+                            "skipped for multi-part or API targets"
+                        ),
                     )
                 )
                 continue
@@ -571,9 +605,9 @@ def check_failure_probes(
     probes = entity.failure_probes
     if not probes:
         return []
-    source_rows = source.fetch_rows(source_relation(entity), entity.filter_source)
+    source_rows = fetch_concat(source, source_relations(entity), entity.filter_source)
     target_rows = _index_by_key(
-        target.fetch_rows(target_relation(entity), entity.filter_target),
+        fetch_concat(target, target_relations(entity), entity.filter_target),
         entity.business_key,
     )
     results: list[CheckResult] = []

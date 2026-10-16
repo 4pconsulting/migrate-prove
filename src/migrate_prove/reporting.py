@@ -47,6 +47,28 @@ def write_html(report: RunReport, contract: Contract, path: Path) -> None:
     critical = report.critical_failed(contract)
     rows = [_render_result_row(item) for item in report.results]
     body_rows = "\n".join(rows)
+    observations = report.observation_exports()
+    if observations:
+        obs_items = "".join(
+            f"<li><code>{_esc(str(item.get('path') or ''))}</code>"
+            f" — {item.get('row_count', 0)} row(s)"
+            f" ({_esc(str(item.get('entity') or ''))})</li>"
+            for item in observations
+        )
+        observation_section = (
+            f'<h2>Observations</h2><ul class="muted">{obs_items}</ul>'
+            f'<p class="muted">Mode: {_esc(report.mode)}'
+            f"{' · side=' + _esc(report.observe_side) if report.observe_side else ''}"
+            f" — pairwise checks are skipped for manual reconciliation.</p>"
+        )
+    else:
+        observation_section = ""
+    banner_ok = (
+        "Observation export complete. Pairwise prove checks were skipped."
+        if report.mode == "observe" and not report.failed
+        else "All executed checks passed. Target matches the migration contract within this run."
+    )
+    banner_fail = "Cutover is not proven: critical or contract checks failed."
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -142,14 +164,16 @@ def write_html(report: RunReport, contract: Contract, path: Path) -> None:
   <h1>Migration evidence scorecard</h1>
   <p class="muted">{_esc(report.name)} · {_esc(report.started_at)} → {_esc(report.finished_at)}</p>
   <div class="banner {'fail' if report.failed else 'pass'}">
-    {"Cutover is not proven: critical or contract checks failed." if (critical or report.failed) else "All executed checks passed. Target matches the migration contract within this run."}
+    {banner_fail if (critical or report.failed) else banner_ok}
     {" Critical entity failures: " + _esc(", ".join(critical)) if critical else ""}
   </div>
   <div class="cards">
     <div class="card"><span class="muted">Checks</span><strong>{report.total}</strong></div>
     <div class="card"><span class="muted">Passed</span><strong>{report.passed}</strong></div>
     <div class="card"><span class="muted">Failed</span><strong>{report.failed}</strong></div>
+    <div class="card"><span class="muted">Skipped</span><strong>{report.skipped}</strong></div>
   </div>
+  {observation_section}
   <h2>Results</h2>
   <div class="scorecard">
     <div class="scorecard-head">
@@ -420,6 +444,8 @@ def print_console(report: RunReport) -> None:
         style = "green" if item.status == CheckStatus.PASS else "red"
         if item.status == CheckStatus.WARN:
             style = "yellow"
+        elif item.status == CheckStatus.SKIP:
+            style = "dim"
         table.add_row(
             LEVEL_TITLES.get(item.level, item.level),
             item.entity,
@@ -430,5 +456,11 @@ def print_console(report: RunReport) -> None:
         )
     console.print(table)
     console.print(
-        f"[bold]{report.passed}/{report.total} passed[/] · {report.failed} failed"
+        f"[bold]{report.passed}/{report.total} passed[/] · "
+        f"{report.failed} failed · {report.skipped} skipped"
     )
+    for obs in report.observation_exports():
+        console.print(
+            f"[cyan]observe[/] {obs.get('entity')}: {obs.get('path')} "
+            f"({obs.get('row_count')} rows)"
+        )

@@ -162,14 +162,34 @@ target:
   url: "awsathena+rest://athena.${AWS_REGION}.amazonaws.com:443/${ATHENA_SCHEMA}?s3_staging_dir=${ATHENA_S3_STAGING}&work_group=${ATHENA_WORKGROUP}"
 ```
 
-Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints **redacted** connection labels (SQLAlchemy URLs or `salesforce_mock://…` fixture paths).
+Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints **redacted** connection labels (SQLAlchemy URLs, `salesforce_mock://…`, `salesforce://…`, or `http://…`).
 
-**API mock target** (no network; see [ADVANCED.md](ADVANCED.md)):
+**API targets** (see [ADVANCED.md](ADVANCED.md)):
 
 ```yaml
+# CI-safe mock
 target:
   kind: salesforce_mock
   fixtures: fixtures/salesforce
+
+# Live Salesforce — pip install migrate-prove[salesforce]
+target:
+  kind: salesforce
+  url: ${SALESFORCE_URL}
+  api_version: ${SALESFORCE_API_VERSION}
+  client_id: ${SALESFORCE_CLIENT_ID}
+  client_secret: ${SALESFORCE_CLIENT_SECRET}
+
+# Declarative HTTP — pip install migrate-prove[http]
+target:
+  kind: http
+  base_url: ${API_BASE_URL}
+  auth: { type: bearer, token: ${API_TOKEN} }
+  resources:
+    Account:
+      list_path: /v1/accounts
+      records_jmespath: data
+      next_jmespath: next
 ```
 
 ## Authoring a contract
@@ -188,7 +208,7 @@ Transform rules are the oracle, not a second copy of ETL Python. Keep ETL and th
 
 ## Roadmap (v1 is the skeleton that already fails the right way)
 
-1. **Now** — STM YAML, SQLAlchemy + Salesforce-mock connectors, CTE `source_sql`, env-backed secrets, L1–L5, hashing, probes, CLI, HTML/JSON, demos.
+1. **Now** — STM YAML, SQLAlchemy + Salesforce mock/live + HTTP connectors, CTE `source_sql`, env-backed secrets, L1–L5, hashing, probes, CLI, HTML/JSON, demos.
 2. **Excel STM import** — optional extra `openpyxl` to ingest the spreadsheet everyone still has.
 3. **Dialect hash pushdown** — `SHA2` / `sha256` in Postgres, SQL Server, Snowflake so row signatures never leave the estate.
 4. **Stratified sampling at warehouse scale** — deterministic modulus on business keys, 100% for HNW / recent / edge strata.

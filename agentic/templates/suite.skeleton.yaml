@@ -14,8 +14,27 @@ source:
   # Option C: Salesforce mock fixtures
   # kind: salesforce_mock
   # fixtures: fixtures/salesforce
+  # Option D: live Salesforce (requires migrate-prove[salesforce])
+  # kind: salesforce
+  # url: ${SALESFORCE_URL}
+  # api_version: ${SALESFORCE_API_VERSION}
+  # client_id: ${SALESFORCE_CLIENT_ID}
+  # client_secret: ${SALESFORCE_CLIENT_SECRET}
+  # Option E: declarative HTTP API (requires migrate-prove[http])
+  # kind: http
+  # base_url: ${API_BASE_URL}
+  # auth: { type: bearer, token: ${API_TOKEN} }
+  # resources:
+  #   Account:
+  #     list_path: /v1/accounts
+  #     records_jmespath: data
+  #     next_jmespath: next
 target:
   url: ${TARGET_URL}
+# mode: prove                    # default
+# mode: observe                  # one-sided export + SKIP pairwise
+# observe_side: target           # source | target (required when mode=observe)
+# # omit the other connection when observing
 output_dir: artifacts
 continue_on_fail: true
 levels: ["1", "probes", "2", "3", "4", "hash", "5"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 import typer
 
@@ -30,6 +31,11 @@ def compile(
 def run(
     suite: Path = typer.Argument(..., exists=True, help="Suite YAML (connections + contract path)"),
     entity: list[str] = typer.Option(None, "--entity", "-e", help="Limit to named entities"),
+    observe: Optional[str] = typer.Option(
+        None,
+        "--observe",
+        help="Force one-sided observe mode: source or target",
+    ),
     env_file: Path | None = typer.Option(
         None,
         "--env-file",
@@ -43,26 +49,72 @@ def run(
     config = load_suite(suite)
     base = suite.parent
     contract = load_contract((base / config.contract).resolve())
+    output_dir = (base / config.output_dir).resolve()
+
+    mode = config.mode
+    observe_side = config.observe_side
+    if observe is not None:
+        side = observe.strip().lower()
+        if side not in {"source", "target"}:
+            typer.secho("--observe must be 'source' or 'target'", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
+        mode = "observe"
+        observe_side = side  # type: ignore[assignment]
+
     try:
-        source_label = describe_connection(config.source, base)
-        target_label = describe_connection(config.target, base)
-        source = build_connector(config.source, base, name="source")
-        target = build_connector(config.target, base, name="target")
+        source = None
+        target = None
+        source_label = "(not connected)"
+        target_label = "(not connected)"
+        if mode == "prove":
+            assert config.source is not None and config.target is not None
+            source_label = describe_connection(config.source, base)
+            target_label = describe_connection(config.target, base)
+            source = build_connector(config.source, base, name="source")
+            target = build_connector(config.target, base, name="target")
+        else:
+            assert observe_side in {"source", "target"}
+            if observe_side == "source":
+                if config.source is None:
+                    typer.secho(
+                        "observe source requires a source connection in suite.yaml",
+                        fg=typer.colors.RED,
+                        err=True,
+                    )
+                    raise typer.Exit(code=2)
+                source_label = describe_connection(config.source, base)
+                source = build_connector(config.source, base, name="source")
+            else:
+                if config.target is None:
+                    typer.secho(
+                        "observe target requires a target connection in suite.yaml",
+                        fg=typer.colors.RED,
+                        err=True,
+                    )
+                    raise typer.Exit(code=2)
+                target_label = describe_connection(config.target, base)
+                target = build_connector(config.target, base, name="target")
     except MissingEnvError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
 
+    typer.echo(f"mode:   {mode}" + (f" ({observe_side})" if mode == "observe" else ""))
     typer.echo(f"source: {source_label}")
     typer.echo(f"target: {target_label}")
 
-    engine = ValidationEngine(source, target)
+    engine = ValidationEngine(
+        source,
+        target,
+        mode=mode,
+        observe_side=observe_side,
+        output_dir=output_dir,
+    )
     report = engine.run(
         contract,
         levels=config.levels,
         continue_on_fail=config.continue_on_fail,
         entities=entity or None,
     )
-    output_dir = (base / config.output_dir).resolve()
     write_json(report, output_dir / "report.json")
     write_html(report, contract, output_dir / "report.html")
     print_console(report)

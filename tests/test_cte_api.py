@@ -8,7 +8,8 @@ from migrate_prove.contract import load_contract, load_suite
 from migrate_prove.demo.cte_api import seed_cte_api
 from migrate_prove.engine import ValidationEngine
 from migrate_prove.models import CheckStatus, ConnectionConfig, Entity
-from migrate_prove.salesforce import SalesforceMockConnector, project_salesforce_record
+from migrate_prove.api_rows import project_salesforce_record
+from migrate_prove.salesforce import SalesforceMockConnector
 from migrate_prove.secrets import build_connector, describe_connection
 from migrate_prove.sql import source_relation
 
@@ -34,6 +35,16 @@ def test_entity_requires_table_xor_sql():
                 "mappings": [{"source": "id", "target": "id"}],
             }
         )
+    ok = Entity.model_validate(
+        {
+            "name": "x",
+            "source_sql": "SELECT 1 AS id",
+            "target_sql": "SELECT 1 AS id",
+            "business_key": ["id"],
+            "mappings": [{"source": "id", "target": "id"}],
+        }
+    )
+    assert ok.target_sql is not None
 
 
 def test_relation_sql_wraps_cte(tmp_path: Path):

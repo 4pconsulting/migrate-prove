@@ -44,4 +44,4 @@ Gates before each handoff are in [handoff/](handoff/). See also root [AGENTIC.md
 
 - Not a replacement for `ValidationEngine`
 - Not a place for secrets in YAML
-- Not a claim that every connection kind (live Salesforce, arbitrary APIs) is implemented in the package today — elicit honestly, map to supported connectors or mark unsupported
+- Not a claim that every system (e.g. Excel as a live connector) is implemented — elicit honestly, map to supported kinds (`sqlalchemy`, `salesforce_mock`, `salesforce`, `http`) or mark unsupported

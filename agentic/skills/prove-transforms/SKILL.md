@@ -67,6 +67,20 @@ normalize:
 - Hop: only rules **introduced on this hop**
 - E2E: full business mapping
 
+## Split physical objects (same grain)
+
+When one STM grain lands in multiple tables/objects, use concat parts (not separate entities) so volume slices / hash still compare one row set:
+
+```yaml
+target_parts:
+  - table: Account_Personal
+  - table: Account_Business
+# exactly one of target_table | target_sql | target_parts
+# exactly one of source_table | source_sql | source_parts
+```
+
+All parts must project the same mapped column names. See `ADVANCED.md`.
+
 ## Concern
 
 **transformation**

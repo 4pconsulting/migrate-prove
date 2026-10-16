@@ -30,8 +30,9 @@ Exit codes: `0` all pass; `1` FAIL/ERROR; `2` missing env secrets.
 
 - Do not invent STM fields outside `src/migrate_prove/models.py`
 - Secrets never in YAML — only `${ENV}` / `${ENV:-default}`
-- Exactly one of `source_table` or `source_sql` per entity
-- Connection `kind` today: `sqlalchemy` | `salesforce_mock`
+- Exactly one of `source_table` | `source_sql` | `source_parts` (and same for target_*)
+- Suite `mode`: `prove` (default, both connections) or `observe` + `observe_side`
+- Connection `kind` today: `sqlalchemy` | `salesforce_mock` | `salesforce` | `http`
 - Hop contracts stay thin; e2e STM carries the cutover claim (see `ASSURANCE.md`)
 
 ## Agentic pipeline

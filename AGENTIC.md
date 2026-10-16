@@ -89,7 +89,8 @@ Open `examples/banking_demo/artifacts/report.html`. Totals may pass while slices
 - STM YAML is the oracle; agents author YAML, not ad-hoc pytest/SQL test suites.
 - Never put passwords or tokens in suite/STM YAML — `${VAR}` only.
 - Do not invent financial tolerances; defer L3 / exclude `"3"` from `levels` until agreed.
-- Cap connectors to what the package supports today (`sqlalchemy`, `salesforce_mock`); mark other kinds as blockers.
+- Cap connectors to what the package supports today (`sqlalchemy`, `salesforce_mock`, `salesforce`, `http`); mark other kinds as blockers.
+- Use suite `mode: observe` + `observe_side` for one-sided export; use `source_parts` / `target_parts` when one grain is split across objects.
 - Hop contracts stay thin; e2e carries the cutover claim — see [`ASSURANCE.md`](ASSURANCE.md).
 
 ## Further reading

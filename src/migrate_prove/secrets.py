@@ -9,6 +9,7 @@ from urllib.parse import quote_plus, urlencode, urlsplit, urlunsplit
 from dotenv import load_dotenv
 
 from migrate_prove.models import ConnectionConfig
+from migrate_prove.row_store import DEFAULT_BUFFER_ROWS
 
 _ENV_PATTERN = re.compile(
     r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}"
@@ -115,6 +116,16 @@ def resolve_connection(
     return build_url_from_structured(config, environ)
 
 
+def _resolve_spill_dir(spill_dir: str | None, base: Path, environ: Mapping[str, str] | None) -> str | None:
+    if spill_dir is None:
+        return None
+    expanded = expand_string(spill_dir, environ)
+    path = Path(expanded)
+    if not path.is_absolute():
+        path = (base / path).resolve()
+    return str(path)
+
+
 def describe_connection(
     block: ConnectionConfig | dict[str, Any],
     base: Path,
@@ -126,6 +137,16 @@ def describe_connection(
         fixtures = expand_string(config.fixtures or "", environ)
         path = (base / fixtures).resolve() if fixtures else base
         return f"salesforce_mock://{path.as_posix()}"
+    if config.kind == "salesforce":
+        login = expand_string(config.url or "", environ)
+        version = expand_string(config.api_version or "", environ)
+        host = urlsplit(login).netloc or login
+        return f"salesforce://{host}/v{version.lstrip('v')}"
+    if config.kind == "http":
+        base_url = expand_string(config.base_url or "", environ)
+        host = urlsplit(base_url).netloc or base_url
+        resource_count = len(config.resources or {})
+        return f"http://{host} ({resource_count} resources)"
     return redact_url(resolve_connection(config, base, environ))
 
 
@@ -137,7 +158,9 @@ def build_connector(
 ):
     """Construct a Connector from a suite connection block."""
     from migrate_prove.connectors import SqlAlchemyConnector
+    from migrate_prove.http_connector import HttpConnector
     from migrate_prove.salesforce import SalesforceMockConnector
+    from migrate_prove.salesforce_live import SalesforceConnector
 
     config = block if isinstance(block, ConnectionConfig) else ConnectionConfig.model_validate(block)
     if config.kind == "salesforce_mock":
@@ -146,6 +169,32 @@ def build_connector(
         if not path.is_absolute():
             path = (base / path).resolve()
         return SalesforceMockConnector(path, name=name)
+
+    if config.kind == "salesforce":
+        return SalesforceConnector(
+            login_url=expand_string(config.url or "", environ),
+            api_version=expand_string(config.api_version or "", environ),
+            client_id=expand_string(config.client_id or "", environ),
+            client_secret=expand_string(config.client_secret or "", environ),
+            name=name,
+            buffer_rows=config.buffer_rows if config.buffer_rows is not None else DEFAULT_BUFFER_ROWS,
+            spill_dir=_resolve_spill_dir(config.spill_dir, base, environ),
+            max_rows=config.max_rows,
+        )
+
+    if config.kind == "http":
+        auth = expand_value(config.auth, environ) if config.auth is not None else None
+        resources = expand_value(config.resources or {}, environ)
+        return HttpConnector(
+            base_url=expand_string(config.base_url or "", environ),
+            resources=resources,
+            auth=auth,
+            name=name,
+            buffer_rows=config.buffer_rows if config.buffer_rows is not None else DEFAULT_BUFFER_ROWS,
+            spill_dir=_resolve_spill_dir(config.spill_dir, base, environ),
+            max_rows=config.max_rows,
+        )
+
     url = resolve_connection(config, base, environ)
     return SqlAlchemyConnector(url, name=name)
 

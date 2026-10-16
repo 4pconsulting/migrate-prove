@@ -27,7 +27,7 @@ def select_keys(
         return [tuple(row[col] for col in key_columns) for row in rows]
 
     # Stratified sampling uses SQL pushdown when the dialect supports it.
-    if connector.dialect_name() == "salesforce":
+    if connector.dialect_name() in {"salesforce", "http"}:
         rows = connector.fetch_rows(ref, extra_where)
         return [tuple(row[col] for col in key_columns) for row in rows]
 

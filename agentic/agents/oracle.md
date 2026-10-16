@@ -40,7 +40,9 @@ Also read `agentic/AGENTS.md`, `ASSURANCE.md` (hop vs e2e), and `agentic/handoff
 
 - Correctness is `target ≈ STM(source)`, not `source == target`.
 - No secrets in YAML.
-- Exactly one of `source_table` or `source_sql` per entity.
+- Exactly one of `source_table` | `source_sql` | `source_parts` per entity.
+- Exactly one of `target_table` | `target_sql` | `target_parts` per entity.
+- Prefer `target_parts` / `source_parts` when one grain is split across physical objects (concat for prove).
 - Do not reimplement the ValidationEngine in prose — emit contract YAML.
 - Visible diffs only when changing an existing STM; never silent rewrites after Prover feedback without stating why.
 

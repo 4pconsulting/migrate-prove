@@ -26,7 +26,9 @@ Produce `suite.yaml` and `.env.example` from a compiling STM. Always elicit conn
 3. Map answers to supported `ConnectionConfig`:
    - `kind: sqlalchemy` (URL or structured dialect/host/database)
    - `kind: salesforce_mock` + `fixtures`
-4. If the user needs an unsupported kind (live Salesforce, arbitrary REST, etc.), document a **blocker** — do not emit fake connector YAML.
+   - `kind: salesforce` + url / api_version / client_id / client_secret
+   - `kind: http` + base_url / auth / resources
+4. If the user needs an unsupported kind (Excel/files as a live connector, etc.), document a **blocker** — do not emit fake connector YAML. Note `pip install migrate-prove[http]` / `[salesforce]` when extras are required.
 5. Write suite YAML with `${ENV}` for secrets only.
 6. Write `.env.example` listing required variable names.
 7. Align `levels` with deferred STM dimensions.

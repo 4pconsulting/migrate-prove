@@ -1,0 +1,122 @@
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from migrate_prove.connectors import SqlAlchemyConnector
+from migrate_prove.engine import ValidationEngine
+from migrate_prove.models import CheckStatus, Contract, Entity, SuiteConfig
+
+
+def _entity() -> Entity:
+    return Entity.model_validate(
+        {
+            "name": "accounts",
+            "source_table": "Customer",
+            "target_table": "Account",
+            "business_key": ["External_Id__c"],
+            "mappings": [
+                {"source": "CustID", "target": "External_Id__c"},
+                {"source": "Name", "target": "Name"},
+            ],
+        }
+    )
+
+
+def _seed(db: Path) -> None:
+    conn = SqlAlchemyConnector(f"sqlite:///{db.as_posix()}")
+    conn.execute("CREATE TABLE Customer (CustID TEXT, Name TEXT)")
+    conn.execute("CREATE TABLE Account (External_Id__c TEXT, Name TEXT)")
+    conn.execute("INSERT INTO Customer VALUES ('C1','Ada'), ('C2','Bob')")
+    conn.execute("INSERT INTO Account VALUES ('C1','Ada'), ('C2','Bob')")
+    conn.engine.dispose()
+
+
+def test_prove_mode_requires_both_connections():
+    with pytest.raises(ValidationError):
+        SuiteConfig.model_validate(
+            {
+                "name": "x",
+                "contract": "stm.yaml",
+                "mode": "prove",
+                "source": {"url": "sqlite:///a.db"},
+            }
+        )
+
+
+def test_observe_mode_requires_live_side():
+    with pytest.raises(ValidationError):
+        SuiteConfig.model_validate(
+            {
+                "name": "x",
+                "contract": "stm.yaml",
+                "mode": "observe",
+                "observe_side": "target",
+                "source": {"url": "sqlite:///a.db"},
+            }
+        )
+    suite = SuiteConfig.model_validate(
+        {
+            "name": "x",
+            "contract": "stm.yaml",
+            "mode": "observe",
+            "observe_side": "target",
+            "target": {"url": "sqlite:///t.db"},
+        }
+    )
+    assert suite.source is None
+    assert suite.target is not None
+
+
+def test_observe_target_exports_and_skips_pairwise(tmp_path: Path):
+    db = tmp_path / "obs.db"
+    _seed(db)
+    url = f"sqlite:///{db.as_posix()}"
+    target = SqlAlchemyConnector(url, name="target")
+    out = tmp_path / "artifacts"
+    engine = ValidationEngine(
+        None,
+        target,
+        mode="observe",
+        observe_side="target",
+        output_dir=out,
+    )
+    report = engine.run(
+        Contract(name="obs", entities=[_entity()]),
+        levels=["1", "2", "4", "hash", "5"],
+    )
+    assert report.failed == 0
+    assert report.mode == "observe"
+    exports = report.observation_exports()
+    assert len(exports) == 1
+    path = Path(exports[0]["path"])
+    assert path.exists()
+    assert exports[0]["row_count"] == 2
+    meta = Path(exports[0]["meta"])
+    assert meta.exists()
+
+    statuses = {item.level: item.status for item in report.results if item.level != "observe"}
+    assert statuses["1"] == CheckStatus.SKIP
+    assert statuses["2"] == CheckStatus.SKIP
+    assert statuses["4"] == CheckStatus.SKIP
+    assert statuses["hash"] == CheckStatus.SKIP
+    # single target relation → L5 runs (no invariants configured → empty); level may be absent
+    observe = next(item for item in report.results if item.level == "observe")
+    assert observe.status == CheckStatus.PASS
+
+
+def test_observe_source_skips_invariants(tmp_path: Path):
+    db = tmp_path / "obs.db"
+    _seed(db)
+    url = f"sqlite:///{db.as_posix()}"
+    source = SqlAlchemyConnector(url, name="source")
+    report = ValidationEngine(
+        source,
+        None,
+        mode="observe",
+        observe_side="source",
+        output_dir=tmp_path / "artifacts",
+    ).run(Contract(name="obs", entities=[_entity()]), levels=["observe", "5"])
+    assert any(
+        item.level == "5" and item.status == CheckStatus.SKIP for item in report.results
+    )
