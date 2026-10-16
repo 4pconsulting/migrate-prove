@@ -39,27 +39,102 @@ def _handler(request: httpx.Request) -> httpx.Response:
                     {"name": "Id", "type": "id", "nillable": False, "length": 18},
                     {"name": "Name", "type": "string", "nillable": True, "length": 80},
                     {"name": "External_Id__c", "type": "string", "nillable": True, "length": 40},
+                    {"name": "Status__c", "type": "string", "nillable": True, "length": 20},
+                    {"name": "Balance__c", "type": "double", "nillable": True},
                 ]
             },
         )
 
     if "/query" in url and "query/" not in url.split("/services/")[-1]:
         q = parse_qs(urlparse(url).query).get("q", [""])[0]
+
+        # SOQL aggregate pushdown
+        if "SELECT COUNT()" in q:
+            if "External_Id__c = 'C002'" in q:
+                return httpx.Response(200, json={"totalSize": 1, "done": True, "records": []})
+            return httpx.Response(200, json={"totalSize": 3, "done": True, "records": []})
+
+        if "COUNT(Id) row_count" in q and "GROUP BY" in q:
+            return httpx.Response(
+                200,
+                json={
+                    "done": True,
+                    "records": [
+                        {
+                            "attributes": {"type": "AggregateResult"},
+                            "Status__c": "Active",
+                            "row_count": 2,
+                        },
+                        {
+                            "attributes": {"type": "AggregateResult"},
+                            "Status__c": "Closed",
+                            "row_count": 1,
+                        },
+                    ],
+                },
+            )
+
+        if "SUM(Balance__c) metric" in q and "GROUP BY" in q:
+            return httpx.Response(
+                200,
+                json={
+                    "done": True,
+                    "records": [
+                        {
+                            "attributes": {"type": "AggregateResult"},
+                            "Status__c": "Active",
+                            "metric": 40.0,
+                        },
+                        {
+                            "attributes": {"type": "AggregateResult"},
+                            "Status__c": "Closed",
+                            "metric": 20.0,
+                        },
+                    ],
+                },
+            )
+
+        if "SUM(Balance__c) metric" in q:
+            return httpx.Response(
+                200,
+                json={
+                    "done": True,
+                    "records": [
+                        {"attributes": {"type": "AggregateResult"}, "metric": 60.0},
+                    ],
+                },
+            )
+
+        if "COUNT(Id) metric" in q:
+            return httpx.Response(
+                200,
+                json={
+                    "done": True,
+                    "records": [
+                        {"attributes": {"type": "AggregateResult"}, "metric": 3},
+                    ],
+                },
+            )
+
         page1 = [
             {
                 "attributes": {"type": "Account"},
                 "Id": "001A",
                 "Name": "Alpha",
                 "External_Id__c": "C001",
+                "Status__c": "Active",
+                "Balance__c": 10,
             },
             {
                 "attributes": {"type": "Account"},
                 "Id": "001B",
                 "Name": "Beta",
                 "External_Id__c": "C002",
+                "Status__c": "Closed",
+                "Balance__c": 20,
             },
         ]
-        if "External_Id__c = 'C002'" in q:
+        if "External_Id__c = 'C002'" in q and "FIELDS(ALL)" in q:
             return httpx.Response(200, json={"done": True, "records": [page1[1]]})
         return httpx.Response(
             200,
@@ -81,6 +156,8 @@ def _handler(request: httpx.Request) -> httpx.Response:
                         "Id": "001C",
                         "Name": "Gamma",
                         "External_Id__c": "C003",
+                        "Status__c": "Active",
+                        "Balance__c": 30,
                     }
                 ],
             },
@@ -128,6 +205,48 @@ def test_salesforce_live_token_describe_and_pagination(sf_client, tmp_path: Path
         connector.close()
 
 
+def test_salesforce_soql_aggregate_pushdown(sf_client, tmp_path: Path):
+    seen: list[str] = []
+
+    def capturing(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/query" in str(request.url):
+            q = parse_qs(urlparse(str(request.url)).query).get("q", [""])[0]
+            if q:
+                seen.append(q)
+        return _handler(request)
+
+    transport = httpx.MockTransport(capturing)
+    with httpx.Client(transport=transport) as client:
+        connector = SalesforceConnector(
+            login_url="https://login.example.com",
+            api_version="59.0",
+            client_id="cid",
+            client_secret="csecret",
+            spill_dir=str(tmp_path / "spill"),
+            client=client,
+        )
+        try:
+            assert connector.count_rows(RelationRef(table="Account")) == 3
+            assert any("SELECT COUNT()" in q for q in seen)
+            assert not any("FIELDS(ALL)" in q and "COUNT()" in q for q in seen)
+
+            groups = connector.group_count(RelationRef(table="Account"), ["Status__c"])
+            by_status = {g["Status__c"]: g["row_count"] for g in groups}
+            assert by_status == {"Active": 2, "Closed": 1}
+            assert any("GROUP BY Status__c" in q and "row_count" in q for q in seen)
+
+            assert connector.aggregate(RelationRef(table="Account"), "COUNT(*)") == 3.0
+            assert connector.aggregate(RelationRef(table="Account"), "SUM(Balance__c)") == 60.0
+
+            grouped = connector.aggregate_grouped(
+                RelationRef(table="Account"), "SUM(Balance__c)", ["Status__c"]
+            )
+            metrics = {row["Status__c"]: row["metric"] for row in grouped}
+            assert metrics == {"Active": 40.0, "Closed": 20.0}
+        finally:
+            connector.close()
+
+
 def test_salesforce_connection_config_and_describe(tmp_path: Path):
     cfg = ConnectionConfig(
         kind="salesforce",
@@ -162,7 +281,6 @@ def test_salesforce_connection_config_and_describe(tmp_path: Path):
 
 
 def test_build_connector_salesforce(tmp_path: Path, sf_client):
-    # build_connector creates a real client; smoke-test factory wiring with mocks via subclass path
     cfg = {
         "kind": "salesforce",
         "url": "https://login.example.com",
@@ -174,7 +292,6 @@ def test_build_connector_salesforce(tmp_path: Path, sf_client):
     }
     connector = build_connector(cfg, tmp_path, "target")
     assert connector.dialect_name() == "salesforce"
-    # Swap client for MockTransport without re-authing incorrectly
     connector._client = sf_client
     connector._owns_client = False
     try:

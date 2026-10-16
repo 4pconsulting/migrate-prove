@@ -183,9 +183,10 @@ Flow:
 
 1. `POST {url}/services/oauth2/token` with `grant_type=client_credentials`
 2. Use `access_token` + token response `instance_url` for Describe / Query
-3. Follow `nextRecordsUrl` until `done`; rows spill to NDJSON on disk (default buffer **5000** rows) so large objects are not held entirely in memory
+3. **Row fetches** (`fetch_rows` — L4 / HASH / observe): follow `nextRecordsUrl` until `done`; rows spill to NDJSON on disk (default buffer **5000**)
+4. **Aggregates** (L2 volume / L3 metrics): SOQL pushdown — `COUNT()`, `COUNT(Id) … GROUP BY`, `SUM(field)` — without downloading every row. Falls back to in-process only if the expression/dimensions are not pushable (e.g. non-field `dimension_sql`)
 
-API version ≥ 51 uses `SELECT FIELDS(ALL)`; older versions select described field names (capped).
+API version ≥ 51 uses `SELECT FIELDS(ALL)` for row fetches; older versions select described field names (capped).
 
 ### Declarative HTTP (`kind: http`)
 

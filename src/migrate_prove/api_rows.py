@@ -8,6 +8,34 @@ from typing import Any
 
 _SUM_RE = re.compile(r"^\s*SUM\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*$", re.I)
 _COUNT_RE = re.compile(r"^\s*COUNT\s*\(\s*\*\s*\)\s*$", re.I)
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def parse_count_star(expression: str) -> bool:
+    return bool(_COUNT_RE.match(expression))
+
+
+def parse_sum_field(expression: str) -> str | None:
+    match = _SUM_RE.match(expression)
+    return match.group(1) if match else None
+
+
+def soql_aggregate_select(expression: str, *, alias: str = "metric") -> str:
+    """Map COUNT(*) / SUM(field) to a SOQL select list fragment with alias."""
+    if parse_count_star(expression):
+        return f"COUNT(Id) {alias}"
+    field = parse_sum_field(expression)
+    if field:
+        return f"SUM({field}) {alias}"
+    raise ValueError(
+        f"API aggregates support COUNT(*) or SUM(field) only, got: {expression!r}"
+    )
+
+
+def require_soql_idents(names: list[str], *, label: str) -> None:
+    for name in names:
+        if not _IDENT_RE.match(name):
+            raise ValueError(f"Invalid SOQL {label} identifier: {name!r}")
 
 
 def project_salesforce_record(record: dict[str, Any]) -> dict[str, Any]:

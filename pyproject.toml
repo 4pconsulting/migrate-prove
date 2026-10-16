@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "migrate-prove"
-version = "0.3.1"
+version = "0.3.2"
 description = "Prove that migrated target data matches the Source-to-Target Mapping contract — not just that the ETL job exited 0."
 readme = "README.md"
 requires-python = ">=3.12"

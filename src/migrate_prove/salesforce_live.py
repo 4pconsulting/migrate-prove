@@ -12,10 +12,14 @@ from migrate_prove.api_rows import (
     filter_to_soql_where,
     group_count_rows,
     project_salesforce_record,
+    require_soql_idents,
+    soql_aggregate_select,
 )
 from migrate_prove.connectors import ColumnInfo, RelationRef, TableInfo
 from migrate_prove.http_util import DEFAULT_TIMEOUT, request_json, require_httpx
 from migrate_prove.row_store import DEFAULT_BUFFER_ROWS, SpilledRowStore
+
+_SOQL_SAFE = " ()',=!.<>_"
 
 
 def _normalize_api_version(version: str) -> str:
@@ -32,8 +36,24 @@ def _parse_api_major(version: str) -> float:
         return 0.0
 
 
+def _aggregate_value(record: dict[str, Any], alias: str) -> float:
+    if alias in record:
+        return float(record[alias] or 0)
+    # Unaliased aggregates often land as expr0, expr1, …
+    for key, value in record.items():
+        if key == "attributes":
+            continue
+        if isinstance(key, str) and key.startswith("expr"):
+            return float(value or 0)
+    raise KeyError(f"Aggregate alias {alias!r} not found in {record!r}")
+
+
 class SalesforceConnector:
-    """Live Salesforce connector using client-credentials OAuth and disk-spilled query pages."""
+    """Live Salesforce connector using client-credentials OAuth and disk-spilled query pages.
+
+    Row fetches spill to disk. COUNT / SUM / GROUP BY volume & metrics use SOQL
+    aggregate queries (no full object download).
+    """
 
     def __init__(
         self,
@@ -172,10 +192,62 @@ class SalesforceConnector:
         names = sorted(info.columns)
         if not names:
             raise ValueError(f"No fields found in describe for {object_name}")
-        # Salesforce SOQL SELECT length / field count limits; keep a sane cap.
         if len(names) > 200:
             names = names[:200]
         return ", ".join(names)
+
+    def _query_url(self, soql: str) -> str:
+        return f"{self._api_root()}/query?q={quote(soql, safe=_SOQL_SAFE)}"
+
+    def _query_pages(self, soql: str) -> list[dict[str, Any]]:
+        """Run SOQL and collect all record pages (row or AggregateResult)."""
+        url: str | None = self._query_url(soql)
+        headers = self._auth_headers()
+        records: list[dict[str, Any]] = []
+        while url:
+            payload = request_json(self._client, "GET", url, headers=headers)
+            if not isinstance(payload, dict):
+                raise RuntimeError("Unexpected Salesforce query payload")
+            chunk = [
+                project_salesforce_record(row) for row in payload.get("records", [])
+            ]
+            records.extend(chunk)
+            if payload.get("done", True):
+                break
+            next_url = payload.get("nextRecordsUrl")
+            if not next_url:
+                break
+            url = self._absolute_url(str(next_url))
+        return records
+
+    def _query_count(self, object_name: str, where: str | None) -> int:
+        """Pushdown: SELECT COUNT() — Salesforce returns the count in totalSize."""
+        soql_where = filter_to_soql_where(where)
+        soql = f"SELECT COUNT() FROM {object_name}"
+        if soql_where:
+            soql = f"{soql} WHERE {soql_where}"
+        payload = request_json(
+            self._client, "GET", self._query_url(soql), headers=self._auth_headers()
+        )
+        if not isinstance(payload, dict):
+            raise RuntimeError("Unexpected Salesforce COUNT() payload")
+        return int(payload.get("totalSize") or 0)
+
+    def _can_push_group(self, dimensions: list[str], dimension_sql: dict[str, str] | None) -> bool:
+        if not dimensions:
+            return False
+        try:
+            require_soql_idents(dimensions, label="group field")
+        except ValueError:
+            return False
+        if not dimension_sql:
+            return True
+        # Only push when every dimension is a bare field (no CASE / SQL expression).
+        for dim in dimensions:
+            expr = dimension_sql.get(dim, dim)
+            if expr != dim and expr != self.quote(dim):
+                return False
+        return True
 
     def _query_into_store(
         self, object_name: str, where: str | None
@@ -185,8 +257,6 @@ class SalesforceConnector:
         soql = f"SELECT {select_clause} FROM {object_name}"
         if soql_where:
             soql = f"{soql} WHERE {soql_where}"
-        safe = " ()',=!.<>_"
-        url = f"{self._api_root()}/query?q={quote(soql, safe=safe)}"
         store = SpilledRowStore(
             buffer_rows=self.buffer_rows,
             spill_dir=self.spill_dir,
@@ -194,6 +264,7 @@ class SalesforceConnector:
             max_rows=self.max_rows,
         )
         self._stores.append(store)
+        url: str | None = self._query_url(soql)
         headers = self._auth_headers()
         while url:
             payload = request_json(self._client, "GET", url, headers=headers)
@@ -214,12 +285,12 @@ class SalesforceConnector:
 
     def fetch_rows(self, ref: RelationRef, where: str | None = None) -> list[dict[str, Any]]:
         object_name = self.relation_sql(ref)
-        # Push filter into SOQL; also apply in-process for consistent client semantics.
         store = self._query_into_store(object_name, where)
         return filter_rows(store.iter_rows(), where)
 
     def count_rows(self, ref: RelationRef, where: str | None = None) -> int:
-        return len(self.fetch_rows(ref, where))
+        object_name = self.relation_sql(ref)
+        return self._query_count(object_name, where)
 
     def group_count(
         self,
@@ -228,11 +299,39 @@ class SalesforceConnector:
         where: str | None = None,
         dimension_sql: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        del dimension_sql
-        return group_count_rows(self.fetch_rows(ref, where), dimensions)
+        if not self._can_push_group(dimensions, dimension_sql):
+            return group_count_rows(self.fetch_rows(ref, where), dimensions)
+        object_name = self.relation_sql(ref)
+        soql_where = filter_to_soql_where(where)
+        select_dims = ", ".join(dimensions)
+        soql = (
+            f"SELECT {select_dims}, COUNT(Id) row_count FROM {object_name}"
+        )
+        if soql_where:
+            soql = f"{soql} WHERE {soql_where}"
+        soql = f"{soql} GROUP BY {select_dims}"
+        records = self._query_pages(soql)
+        results: list[dict[str, Any]] = []
+        for record in records:
+            item = {dim: record.get(dim) for dim in dimensions}
+            item["row_count"] = int(_aggregate_value(record, "row_count"))
+            results.append(item)
+        return results
 
     def aggregate(self, ref: RelationRef, expression: str, where: str | None = None) -> Any:
-        return eval_aggregate(expression, self.fetch_rows(ref, where))
+        try:
+            select_metric = soql_aggregate_select(expression, alias="metric")
+        except ValueError:
+            return eval_aggregate(expression, self.fetch_rows(ref, where))
+        object_name = self.relation_sql(ref)
+        soql_where = filter_to_soql_where(where)
+        soql = f"SELECT {select_metric} FROM {object_name}"
+        if soql_where:
+            soql = f"{soql} WHERE {soql_where}"
+        records = self._query_pages(soql)
+        if not records:
+            return 0.0
+        return _aggregate_value(records[0], "metric")
 
     def aggregate_grouped(
         self,
@@ -242,8 +341,26 @@ class SalesforceConnector:
         where: str | None = None,
         dimension_sql: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        del dimension_sql
-        return aggregate_grouped_rows(self.fetch_rows(ref, where), expression, group_by)
+        try:
+            select_metric = soql_aggregate_select(expression, alias="metric")
+        except ValueError:
+            return aggregate_grouped_rows(self.fetch_rows(ref, where), expression, group_by)
+        if not self._can_push_group(group_by, dimension_sql):
+            return aggregate_grouped_rows(self.fetch_rows(ref, where), expression, group_by)
+        object_name = self.relation_sql(ref)
+        soql_where = filter_to_soql_where(where)
+        select_dims = ", ".join(group_by)
+        soql = f"SELECT {select_dims}, {select_metric} FROM {object_name}"
+        if soql_where:
+            soql = f"{soql} WHERE {soql_where}"
+        soql = f"{soql} GROUP BY {select_dims}"
+        records = self._query_pages(soql)
+        results: list[dict[str, Any]] = []
+        for record in records:
+            item = {dim: record.get(dim) for dim in group_by}
+            item["metric"] = _aggregate_value(record, "metric")
+            results.append(item)
+        return results
 
     def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         del params
