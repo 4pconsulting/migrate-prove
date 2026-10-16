@@ -5,9 +5,10 @@ Artifact: `suite.yaml` + `.env.example` (never commit real secrets).
 ## Hard gate
 
 - [ ] `contract` path resolves relative to the suite file
-- [ ] Connections match mode:
-  - [ ] `mode: prove` (default) → both `source` and `target` present
-  - [ ] `mode: observe` → `observe_side` set and that side’s connection present (other side may be omitted)
+- [ ] Connections match `run`:
+  - [ ] `run: prove` (default) → both `source` and `target` present
+  - [ ] `run: observe-source` → `source` present (target may be omitted)
+  - [ ] `run: observe-target` → `target` present (source may be omitted)
 - [ ] Secrets referenced only as `${VAR}` (or documented as local URLs for demos)
 - [ ] `.env.example` lists every required variable name (align with repo root `.env.example` stubs for SF/HTTP/SQL)
 - [ ] Required pip extras noted when using `salesforce` / `http` / `postgres` / `athena`

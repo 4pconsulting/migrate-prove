@@ -365,33 +365,81 @@ class ConnectionConfig(BaseModel):
 
 
 class SuiteConfig(BaseModel):
+    """Suite binding: contract + connections + run intent.
+
+    ``run`` is the source of truth:
+    - ``prove`` — both connections; pairwise checks
+    - ``observe-source`` / ``observe-target`` — one-sided export; pairwise SKIP
+    """
+
     name: str
     contract: str
     source: ConnectionConfig | None = None
     target: ConnectionConfig | None = None
-    mode: Literal["prove", "observe"] = "prove"
-    observe_side: Literal["source", "target"] | None = None
+    run: Literal["prove", "observe-source", "observe-target"] = "prove"
     output_dir: str = "artifacts"
     continue_on_fail: bool = True
     levels: list[str] = Field(
         default_factory=lambda: ["1", "2", "3", "4", "5", "hash", "probes"]
     )
 
-    @model_validator(mode="after")
-    def mode_connections(self) -> SuiteConfig:
-        if self.mode == "prove":
-            if self.source is None or self.target is None:
-                raise ValueError("prove mode requires both source and target connections")
-            if self.observe_side is not None:
-                raise ValueError("observe_side is only valid when mode is observe")
-            return self
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_mode_observe_side(cls, data: Any) -> Any:
+        """Map deprecated mode/observe_side → run."""
+        if not isinstance(data, dict):
+            return data
+        if "run" in data:
+            if "mode" in data or "observe_side" in data:
+                raise ValueError(
+                    "Use `run` alone (prove | observe-source | observe-target); "
+                    "do not combine with deprecated mode/observe_side"
+                )
+            return data
+        mode = data.pop("mode", None)
+        side = data.pop("observe_side", None)
+        if mode is None and side is None:
+            return data
+        if mode in (None, "prove"):
+            if side is not None:
+                raise ValueError("observe_side requires mode: observe (or use run: observe-*)")
+            data["run"] = "prove"
+            return data
+        if mode == "observe":
+            if side == "source":
+                data["run"] = "observe-source"
+            elif side == "target":
+                data["run"] = "observe-target"
+            else:
+                raise ValueError(
+                    "Deprecated mode: observe requires observe_side: source|target "
+                    "(prefer run: observe-source | observe-target)"
+                )
+            return data
+        raise ValueError(f"Unknown deprecated mode: {mode!r}")
 
-        if self.observe_side is None:
-            raise ValueError("observe mode requires observe_side: source | target")
-        live = self.source if self.observe_side == "source" else self.target
-        if live is None:
-            raise ValueError(
-                f"observe mode with observe_side={self.observe_side!r} "
-                f"requires a {self.observe_side} connection"
-            )
+    @model_validator(mode="after")
+    def run_connections(self) -> SuiteConfig:
+        if self.run == "prove":
+            if self.source is None or self.target is None:
+                raise ValueError("run: prove requires both source and target connections")
+            return self
+        if self.run == "observe-source":
+            if self.source is None:
+                raise ValueError("run: observe-source requires a source connection")
+            return self
+        if self.target is None:
+            raise ValueError("run: observe-target requires a target connection")
         return self
+
+    @property
+    def is_observe(self) -> bool:
+        return self.run in {"observe-source", "observe-target"}
+
+    @property
+    def observe_side(self) -> Literal["source", "target"] | None:
+        if self.run == "observe-source":
+            return "source"
+        if self.run == "observe-target":
+            return "target"
+        return None

@@ -29,7 +29,7 @@ Produce `suite.yaml` and `.env.example` from a compiling STM. Always elicit conn
    - `kind: salesforce` + url / api_version / client_id / client_secret
    - `kind: http` + base_url / auth / resources
 4. If the user needs an unsupported kind (Excel/files as a live connector, etc.), document a **blocker** — do not emit fake connector YAML. Note `pip install migrate-prove[http]` / `[salesforce]` when extras are required.
-5. If only one side is reachable, set `mode: observe` + `observe_side` and omit the other connection.
+5. If only one side is reachable, set `run: observe-source` or `run: observe-target` and omit the other connection (prefer a separate suite file from full prove).
 6. Write suite YAML with `${ENV}` for secrets only.
 7. Write `.env.example` listing required variable names (reuse stubs from repo root `.env.example` for SQL / Salesforce / HTTP).
 8. Align `levels` with deferred STM dimensions.

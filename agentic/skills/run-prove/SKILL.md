@@ -19,7 +19,7 @@ migrate-prove run path\to\suite.yaml --env-file .env
 
 Optional entity filter: `migrate-prove run suite.yaml -e customers`
 
-One-sided observe (override suite mode): `migrate-prove run suite.yaml --observe target`
+Suite `run` field selects intent (`prove` | `observe-source` | `observe-target`) — use separate suite YAML files; do not override on the CLI.
 
 Install extras when the suite uses them: `migrate-prove[postgres]`, `[athena]`, `[salesforce]`, `[http]`. Copy env stubs from repo root `.env.example`.
 
@@ -45,7 +45,7 @@ Under suite `output_dir` (default `artifacts`):
 
 - `report.json`
 - `report.html`
-- `observe/{entity}.{side}.ndjson` (+ `.meta.json`) when `mode: observe` or `--observe`
+- `observe/{entity}.{side}.ndjson` (+ `.meta.json`) when `run: observe-source` or `observe-target`
 
 ## Process
 

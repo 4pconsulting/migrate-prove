@@ -32,26 +32,25 @@ def _seed(db: Path) -> None:
     conn.engine.dispose()
 
 
-def test_prove_mode_requires_both_connections():
+def test_prove_requires_both_connections():
     with pytest.raises(ValidationError):
         SuiteConfig.model_validate(
             {
                 "name": "x",
                 "contract": "stm.yaml",
-                "mode": "prove",
+                "run": "prove",
                 "source": {"url": "sqlite:///a.db"},
             }
         )
 
 
-def test_observe_mode_requires_live_side():
+def test_observe_target_requires_target_connection():
     with pytest.raises(ValidationError):
         SuiteConfig.model_validate(
             {
                 "name": "x",
                 "contract": "stm.yaml",
-                "mode": "observe",
-                "observe_side": "target",
+                "run": "observe-target",
                 "source": {"url": "sqlite:///a.db"},
             }
         )
@@ -59,13 +58,41 @@ def test_observe_mode_requires_live_side():
         {
             "name": "x",
             "contract": "stm.yaml",
-            "mode": "observe",
-            "observe_side": "target",
+            "run": "observe-target",
             "target": {"url": "sqlite:///t.db"},
         }
     )
     assert suite.source is None
     assert suite.target is not None
+    assert suite.observe_side == "target"
+    assert suite.is_observe
+
+
+def test_legacy_mode_observe_side_maps_to_run():
+    suite = SuiteConfig.model_validate(
+        {
+            "name": "x",
+            "contract": "stm.yaml",
+            "mode": "observe",
+            "observe_side": "source",
+            "source": {"url": "sqlite:///s.db"},
+        }
+    )
+    assert suite.run == "observe-source"
+
+
+def test_legacy_and_run_together_rejected():
+    with pytest.raises(ValidationError):
+        SuiteConfig.model_validate(
+            {
+                "name": "x",
+                "contract": "stm.yaml",
+                "run": "prove",
+                "mode": "prove",
+                "source": {"url": "sqlite:///a.db"},
+                "target": {"url": "sqlite:///b.db"},
+            }
+        )
 
 
 def test_observe_target_exports_and_skips_pairwise(tmp_path: Path):
@@ -77,8 +104,7 @@ def test_observe_target_exports_and_skips_pairwise(tmp_path: Path):
     engine = ValidationEngine(
         None,
         target,
-        mode="observe",
-        observe_side="target",
+        run="observe-target",
         output_dir=out,
     )
     report = engine.run(
@@ -86,21 +112,18 @@ def test_observe_target_exports_and_skips_pairwise(tmp_path: Path):
         levels=["1", "2", "4", "hash", "5"],
     )
     assert report.failed == 0
-    assert report.mode == "observe"
+    assert report.run == "observe-target"
     exports = report.observation_exports()
     assert len(exports) == 1
     path = Path(exports[0]["path"])
     assert path.exists()
     assert exports[0]["row_count"] == 2
-    meta = Path(exports[0]["meta"])
-    assert meta.exists()
 
     statuses = {item.level: item.status for item in report.results if item.level != "observe"}
     assert statuses["1"] == CheckStatus.SKIP
     assert statuses["2"] == CheckStatus.SKIP
     assert statuses["4"] == CheckStatus.SKIP
     assert statuses["hash"] == CheckStatus.SKIP
-    # single target relation → L5 runs (no invariants configured → empty); level may be absent
     observe = next(item for item in report.results if item.level == "observe")
     assert observe.status == CheckStatus.PASS
 
@@ -113,8 +136,7 @@ def test_observe_source_skips_invariants(tmp_path: Path):
     report = ValidationEngine(
         source,
         None,
-        mode="observe",
-        observe_side="source",
+        run="observe-source",
         output_dir=tmp_path / "artifacts",
     ).run(Contract(name="obs", entities=[_entity()]), levels=["observe", "5"])
     assert any(

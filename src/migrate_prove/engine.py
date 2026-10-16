@@ -35,14 +35,15 @@ LEVEL_TITLES = {
 
 PAIRWISE_LEVELS = {"1", "probes", "2", "3", "4", "hash"}
 
+RunKind = Literal["prove", "observe-source", "observe-target"]
+
 
 @dataclass
 class RunReport:
     name: str
     started_at: str
     finished_at: str = ""
-    mode: str = "prove"
-    observe_side: str | None = None
+    run: str = "prove"
     results: list[CheckResult] = field(default_factory=list)
 
     @property
@@ -60,6 +61,18 @@ class RunReport:
     @property
     def total(self) -> int:
         return len(self.results)
+
+    @property
+    def is_observe(self) -> bool:
+        return self.run in {"observe-source", "observe-target"}
+
+    @property
+    def observe_side(self) -> str | None:
+        if self.run == "observe-source":
+            return "source"
+        if self.run == "observe-target":
+            return "target"
+        return None
 
     def by_level(self) -> dict[str, list[CheckResult]]:
         grouped: dict[str, list[CheckResult]] = {}
@@ -95,8 +108,7 @@ class RunReport:
             "name": self.name,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
-            "mode": self.mode,
-            "observe_side": self.observe_side,
+            "run": self.run,
             "summary": {
                 "total": self.total,
                 "passed": self.passed,
@@ -115,24 +127,20 @@ class ValidationEngine:
         source: Connector | None,
         target: Connector | None,
         *,
-        mode: Literal["prove", "observe"] = "prove",
-        observe_side: Literal["source", "target"] | None = None,
+        run: RunKind = "prove",
         output_dir: Path | None = None,
     ) -> None:
         self.source = source
         self.target = target
-        self.mode = mode
-        self.observe_side = observe_side
+        self.run_kind: RunKind = run
         self.output_dir = output_dir or Path("artifacts")
-        if mode == "prove":
+        if run == "prove":
             if source is None or target is None:
-                raise ValueError("prove mode requires both source and target connectors")
-        elif observe_side is None:
-            raise ValueError("observe mode requires observe_side")
-        elif observe_side == "source" and source is None:
-            raise ValueError("observe mode (source) requires a source connector")
-        elif observe_side == "target" and target is None:
-            raise ValueError("observe mode (target) requires a target connector")
+                raise ValueError("run: prove requires both source and target connectors")
+        elif run == "observe-source" and source is None:
+            raise ValueError("run: observe-source requires a source connector")
+        elif run == "observe-target" and target is None:
+            raise ValueError("run: observe-target requires a target connector")
 
     def run(
         self,
@@ -143,13 +151,12 @@ class ValidationEngine:
         entities: list[str] | None = None,
     ) -> RunReport:
         selected = levels or [level for level in LEVEL_ORDER if level != "observe"]
-        if self.mode == "observe" and "observe" not in selected:
+        if self.run_kind != "prove" and "observe" not in selected:
             selected = ["observe", *selected]
         report = RunReport(
             name=contract.name,
             started_at=datetime.now(UTC).isoformat(),
-            mode=self.mode,
-            observe_side=self.observe_side,
+            run=self.run_kind,
         )
         selected_entities = [
             entity
@@ -167,7 +174,7 @@ class ValidationEngine:
         return report
 
     def _run_entity(self, entity: Entity, levels: list[str], continue_on_fail: bool) -> list[CheckResult]:
-        if self.mode == "observe":
+        if self.run_kind != "prove":
             return self._run_entity_observe(entity, levels, continue_on_fail)
         return self._run_entity_prove(entity, levels, continue_on_fail)
 
@@ -209,14 +216,16 @@ class ValidationEngine:
     def _run_entity_observe(
         self, entity: Entity, levels: list[str], continue_on_fail: bool
     ) -> list[CheckResult]:
-        assert self.observe_side is not None
+        side: Literal["source", "target"] = (
+            "source" if self.run_kind == "observe-source" else "target"
+        )
         results: list[CheckResult] = []
-        live = self.source if self.observe_side == "source" else self.target
+        live = self.source if side == "source" else self.target
         assert live is not None
-        missing = "target" if self.observe_side == "source" else "source"
+        missing = "target" if side == "source" else "source"
 
         if "observe" in levels:
-            batch = [export_observation(entity, live, self.observe_side, self.output_dir)]
+            batch = [export_observation(entity, live, side, self.output_dir)]
             results.extend(batch)
             if not continue_on_fail and any(
                 item.status in {CheckStatus.FAIL, CheckStatus.ERROR} for item in batch
@@ -238,7 +247,7 @@ class ValidationEngine:
                 results.append(skip_pairwise(entity, level, titles[level], missing))
 
         if "5" in levels:
-            if self.observe_side == "target" and len(target_relations(entity)) == 1:
+            if side == "target" and len(target_relations(entity)) == 1:
                 results.extend(check_invariants(entity, live))
             else:
                 results.append(
@@ -250,7 +259,7 @@ class ValidationEngine:
                         concern=Concern.reconciliation,
                         status=CheckStatus.SKIP,
                         message=(
-                            "observe mode: invariants need observe_side=target "
+                            "observe run: invariants need run: observe-target "
                             "and a single target relation"
                         ),
                     )

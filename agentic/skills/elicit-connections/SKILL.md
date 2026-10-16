@@ -24,7 +24,7 @@ Prefer copying variable stubs from the repo root [`.env.example`](../../../.env.
    - For Salesforce: mock fixtures path vs live API
    - For other APIs: list/schema paths, pagination JMESPath, auth type (`bearer` | `header` | `basic`)
 4. **How to connect:** full SQLAlchemy URL vs structured dialect/host/port/database
-5. **Reachability:** both sides (`mode: prove`) or one-sided (`mode: observe` + `observe_side`)
+5. **Reachability:** both sides (`run: prove`) or one-sided (`run: observe-source` / `observe-target`)
 6. **Secrets:** env var names for user/password/token (never paste production secrets into chat logs if avoidable — prefer var names)
 7. **Extras:** query options, workgroup, SSL, catalog (`options`); for API connectors optional `buffer_rows` / `spill_dir` / `max_rows`
 
@@ -96,11 +96,10 @@ target:
 
 `.env.example` stubs: `API_BASE_URL`, `API_TOKEN`, and/or `API_KEY` / `API_USER` / `API_PASSWORD`.
 
-### Observe mode (one side only)
+### Observe runs (one side only)
 
 ```yaml
-mode: observe
-observe_side: target             # or source
+run: observe-target              # or observe-source
 target:
   kind: salesforce
   url: ${SALESFORCE_URL}
@@ -110,7 +109,7 @@ target:
 # omit the other connection
 ```
 
-CLI override: `migrate-prove run suite.yaml --observe target`.
+Prefer a dedicated suite file per run intent (prove vs observe-*).
 
 ## Unsupported today — do not fake
 
@@ -130,12 +129,12 @@ CLI override: `migrate-prove run suite.yaml --observe target`.
 | Salesforce mock | `kind: salesforce_mock` + `fixtures` |
 | Live Salesforce | `kind: salesforce` + url / api_version / client_id / client_secret |
 | HTTP API | `kind: http` + base_url / auth / resources |
-| One-sided | `mode: observe` + `observe_side` |
+| One-sided | `run: observe-source` / `observe-target` |
 
 ## Output checklist
 
 - [ ] Suite YAML uses `${VAR}` for secrets
 - [ ] `.env.example` lists every var (mirror root `.env.example` stubs)
 - [ ] Extra noted when `salesforce` / `http` / `postgres` / `athena` required
-- [ ] Observe vs prove mode recorded
+- [ ] Suite `run` recorded (prove | observe-source | observe-target)
 - [ ] Unsupported kinds listed as blockers for Prover

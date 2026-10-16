@@ -100,32 +100,41 @@ Rules:
 
 ---
 
-## Observe mode (one-sided export)
+## Observe runs (one-sided export)
 
-When only source *or* only target is reachable, run an observation for manual reconciliation:
+Suite `run` declares intent (no CLI override):
+
+| `run` | Required connection | Purpose |
+| --- | --- | --- |
+| `prove` | source + target | Full reconciliation |
+| `observe-target` | target | Export target for manual reconcile |
+| `observe-source` | source | Export source for manual reconcile |
 
 ```yaml
 name: accounts-observe-target
 contract: stm.yaml
-mode: observe
-observe_side: target
+run: observe-target
 target:
-  url: ${TARGET_URL}
+  kind: salesforce
+  url: ${SALESFORCE_URL}
+  api_version: ${SALESFORCE_API_VERSION}
+  client_id: ${SALESFORCE_CLIENT_ID}
+  client_secret: ${SALESFORCE_CLIENT_SECRET}
 # source omitted
 output_dir: artifacts
 levels: ["1", "2", "4", "hash"]
 ```
-
-Or force for one run: `migrate-prove run suite.yaml --observe target`.
 
 Behaviour:
 
 1. Builds only the live connector
 2. Writes `artifacts/observe/{entity}.{side}.ndjson` plus a `.meta.json` sidecar (row count, columns, filter)
 3. Pairwise checks (L1–L4, hash) are **SKIP** with a clear message
-4. L5 runs only when `observe_side=target` and the entity has a single target relation
+4. L5 runs only for `run: observe-target` with a single target relation
 
 Exit code 0 when export succeeds and nothing ERRORs/FAILs (SKIP alone is success).
+
+Deprecated aliases still accepted: `mode: observe` + `observe_side: target|source` → mapped to `run`.
 
 ---
 

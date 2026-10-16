@@ -139,7 +139,7 @@ Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints
 | Salesforce fixtures (CI) | `salesforce_mock` | none | none (`fixtures:` path) | [ADVANCED.md](ADVANCED.md) |
 | Live Salesforce | `salesforce` | `[salesforce]` | `SALESFORCE_URL`, `SALESFORCE_API_VERSION`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` | [ADVANCED.md](ADVANCED.md) |
 | Raw HTTP API | `http` | `[http]` | `API_BASE_URL`, `API_TOKEN` (or header/basic vars) | [ADVANCED.md](ADVANCED.md) |
-| Only one side reachable | `mode: observe` + `observe_side` | as for that side | same as live side | [ADVANCED.md](ADVANCED.md) |
+| Only one side reachable | `run: observe-source` or `observe-target` | as for that side | same as live side | [ADVANCED.md](ADVANCED.md) |
 | Grain split across tables | entity `source_parts` / `target_parts` | — | — | [ADVANCED.md](ADVANCED.md) |
 
 Unsupported as live connectors today (record a blocker; do not invent `kind`): Excel/files, arbitrary undocumented APIs without an `http` resource map.
@@ -211,21 +211,35 @@ target:
       next_jmespath: next
 ```
 
-### Observe mode (one-sided)
+### Run intent (suite `run` field)
 
-When the other database/API is unreachable, export the live side for manual reconciliation:
+The suite declares what kind of run this is — not the CLI:
+
+| `run` | Connections | Behaviour |
+| --- | --- | --- |
+| `prove` (default) | source **and** target | Full pairwise checks |
+| `observe-target` | target only | Export target rows; pairwise SKIP |
+| `observe-source` | source only | Export source rows; pairwise SKIP |
 
 ```yaml
-mode: observe
-observe_side: target          # or source
+# Full prove — e.g. Athena → Salesforce
+run: prove
+source:
+  url: "awsathena+rest://..."
 target:
   kind: salesforce
   url: ${SALESFORCE_URL}
   # …
-# omit source when observing target
+
+# One-sided export when the other side is unreachable
+run: observe-target
+target:
+  kind: salesforce
+  url: ${SALESFORCE_URL}
+  # … (omit source)
 ```
 
-Or: `migrate-prove run suite.yaml --observe target`. Pairwise checks SKIP; rows land under `artifacts/observe/`.
+Exports land under `artifacts/observe/`. Use separate suite files for prove vs observe; share the same `contract`.
 
 ## Authoring a contract
 

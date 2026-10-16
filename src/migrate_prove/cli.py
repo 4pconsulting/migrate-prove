@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -31,11 +30,6 @@ def compile(
 def run(
     suite: Path = typer.Argument(..., exists=True, help="Suite YAML (connections + contract path)"),
     entity: list[str] = typer.Option(None, "--entity", "-e", help="Limit to named entities"),
-    observe: Optional[str] = typer.Option(
-        None,
-        "--observe",
-        help="Force one-sided observe mode: source or target",
-    ),
     env_file: Path | None = typer.Option(
         None,
         "--env-file",
@@ -44,69 +38,47 @@ def run(
         dir_okay=False,
     ),
 ) -> None:
-    """Run the multi-tier validation pipeline and write an evidence scorecard."""
+    """Run the multi-tier validation pipeline and write an evidence scorecard.
+
+    Suite ``run`` field selects intent: prove | observe-source | observe-target.
+    """
     load_env(env_file)
     config = load_suite(suite)
     base = suite.parent
     contract = load_contract((base / config.contract).resolve())
     output_dir = (base / config.output_dir).resolve()
 
-    mode = config.mode
-    observe_side = config.observe_side
-    if observe is not None:
-        side = observe.strip().lower()
-        if side not in {"source", "target"}:
-            typer.secho("--observe must be 'source' or 'target'", fg=typer.colors.RED, err=True)
-            raise typer.Exit(code=2)
-        mode = "observe"
-        observe_side = side  # type: ignore[assignment]
-
     try:
         source = None
         target = None
         source_label = "(not connected)"
         target_label = "(not connected)"
-        if mode == "prove":
+        if config.run == "prove":
             assert config.source is not None and config.target is not None
             source_label = describe_connection(config.source, base)
             target_label = describe_connection(config.target, base)
             source = build_connector(config.source, base, name="source")
             target = build_connector(config.target, base, name="target")
+        elif config.run == "observe-source":
+            assert config.source is not None
+            source_label = describe_connection(config.source, base)
+            source = build_connector(config.source, base, name="source")
         else:
-            assert observe_side in {"source", "target"}
-            if observe_side == "source":
-                if config.source is None:
-                    typer.secho(
-                        "observe source requires a source connection in suite.yaml",
-                        fg=typer.colors.RED,
-                        err=True,
-                    )
-                    raise typer.Exit(code=2)
-                source_label = describe_connection(config.source, base)
-                source = build_connector(config.source, base, name="source")
-            else:
-                if config.target is None:
-                    typer.secho(
-                        "observe target requires a target connection in suite.yaml",
-                        fg=typer.colors.RED,
-                        err=True,
-                    )
-                    raise typer.Exit(code=2)
-                target_label = describe_connection(config.target, base)
-                target = build_connector(config.target, base, name="target")
+            assert config.target is not None
+            target_label = describe_connection(config.target, base)
+            target = build_connector(config.target, base, name="target")
     except MissingEnvError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
 
-    typer.echo(f"mode:   {mode}" + (f" ({observe_side})" if mode == "observe" else ""))
+    typer.echo(f"run:    {config.run}")
     typer.echo(f"source: {source_label}")
     typer.echo(f"target: {target_label}")
 
     engine = ValidationEngine(
         source,
         target,
-        mode=mode,
-        observe_side=observe_side,
+        run=config.run,
         output_dir=output_dir,
     )
     report = engine.run(

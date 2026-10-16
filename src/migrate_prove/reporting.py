@@ -57,15 +57,14 @@ def write_html(report: RunReport, contract: Contract, path: Path) -> None:
         )
         observation_section = (
             f'<h2>Observations</h2><ul class="muted">{obs_items}</ul>'
-            f'<p class="muted">Mode: {_esc(report.mode)}'
-            f"{' · side=' + _esc(report.observe_side) if report.observe_side else ''}"
+            f'<p class="muted">Run: {_esc(report.run)}'
             f" — pairwise checks are skipped for manual reconciliation.</p>"
         )
     else:
         observation_section = ""
     banner_ok = (
         "Observation export complete. Pairwise prove checks were skipped."
-        if report.mode == "observe" and not report.failed
+        if report.is_observe and not report.failed
         else "All executed checks passed. Target matches the migration contract within this run."
     )
     banner_fail = "Cutover is not proven: critical or contract checks failed."

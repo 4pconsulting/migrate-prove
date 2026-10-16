@@ -31,10 +31,9 @@ source:
   #     next_jmespath: next
 target:
   url: ${TARGET_URL}
-# mode: prove                    # default
-# mode: observe                  # one-sided export + SKIP pairwise
-# observe_side: target           # source | target (required when mode=observe)
-# # omit the other connection when observing
+# run: prove                     # default — both connections, pairwise checks
+# run: observe-target            # target only — export + SKIP pairwise
+# run: observe-source            # source only — export + SKIP pairwise
 output_dir: artifacts
 continue_on_fail: true
 levels: ["1", "probes", "2", "3", "4", "hash", "5"]
