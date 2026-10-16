@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from migrate_prove.checks import (
     check_failure_probes,
@@ -17,6 +17,7 @@ from migrate_prove.checks import (
 from migrate_prove.connectors import Connector
 from migrate_prove.models import CheckResult, CheckStatus, Concern, Contract, Entity, RiskLevel
 from migrate_prove.observe import export_observation, skip_pairwise
+from migrate_prove.progress import ProgressReporter
 from migrate_prove.sql import inspect_relations, source_relations, target_relations
 
 
@@ -34,6 +35,15 @@ LEVEL_TITLES = {
 }
 
 PAIRWISE_LEVELS = {"1", "probes", "2", "3", "4", "hash"}
+
+_OBSERVE_SKIP_TITLES = {
+    "1": "Schema (skipped — observe)",
+    "probes": "Failure-mode probes (skipped — observe)",
+    "2": "Volume (skipped — observe)",
+    "3": "Metrics (skipped — observe)",
+    "4": "Transforms (skipped — observe)",
+    "hash": "Row hashes (skipped — observe)",
+}
 
 RunKind = Literal["prove", "observe-source", "observe-target"]
 
@@ -121,6 +131,13 @@ class RunReport:
         }
 
 
+@dataclass
+class _StepPlan:
+    entity: Entity
+    level: str
+    label: str
+
+
 class ValidationEngine:
     def __init__(
         self,
@@ -129,11 +146,13 @@ class ValidationEngine:
         *,
         run: RunKind = "prove",
         output_dir: Path | None = None,
+        progress: ProgressReporter | None = None,
     ) -> None:
         self.source = source
         self.target = target
         self.run_kind: RunKind = run
         self.output_dir = output_dir or Path("artifacts")
+        self.progress = progress
         if run == "prove":
             if source is None or target is None:
                 raise ValueError("run: prove requires both source and target connectors")
@@ -163,24 +182,120 @@ class ValidationEngine:
             for entity in contract.entities
             if entities is None or entity.name in entities
         ]
+        plan = self._plan_steps(selected_entities, selected)
+        total_steps = len(plan)
+        step_index = 0
+        if self.progress is not None:
+            self.progress.begin(total_steps)
+
         for entity in selected_entities:
-            entity_results = self._run_entity(entity, selected, continue_on_fail)
-            report.results.extend(entity_results)
+            entity_results = self._run_entity(
+                entity,
+                selected,
+                continue_on_fail,
+                plan_total=total_steps,
+                step_index=step_index,
+            )
+            report.results.extend(entity_results.results)
+            step_index = entity_results.next_step_index
             if not continue_on_fail and any(
-                item.status in {CheckStatus.FAIL, CheckStatus.ERROR} for item in entity_results
+                item.status in {CheckStatus.FAIL, CheckStatus.ERROR} for item in entity_results.results
             ):
                 break
         report.finished_at = datetime.now(UTC).isoformat()
         return report
 
-    def _run_entity(self, entity: Entity, levels: list[str], continue_on_fail: bool) -> list[CheckResult]:
+    def _plan_steps(self, entities: list[Entity], levels: list[str]) -> list[_StepPlan]:
+        steps: list[_StepPlan] = []
+        for entity in entities:
+            if self.run_kind == "prove":
+                for level in LEVEL_ORDER:
+                    if level not in levels or level == "observe":
+                        continue
+                    steps.append(_StepPlan(entity, level, LEVEL_TITLES[level]))
+                continue
+
+            if "observe" in levels:
+                steps.append(_StepPlan(entity, "observe", LEVEL_TITLES["observe"]))
+            for level in LEVEL_ORDER:
+                if level not in levels or level in {"observe", "5"}:
+                    continue
+                if level in PAIRWISE_LEVELS:
+                    steps.append(_StepPlan(entity, level, _OBSERVE_SKIP_TITLES[level]))
+            if "5" in levels:
+                steps.append(_StepPlan(entity, "5", LEVEL_TITLES["5"]))
+        return steps
+
+    def _run_entity(
+        self,
+        entity: Entity,
+        levels: list[str],
+        continue_on_fail: bool,
+        *,
+        plan_total: int,
+        step_index: int,
+    ) -> "_EntityRun":
         if self.run_kind != "prove":
-            return self._run_entity_observe(entity, levels, continue_on_fail)
-        return self._run_entity_prove(entity, levels, continue_on_fail)
+            return self._run_entity_observe(
+                entity,
+                levels,
+                continue_on_fail,
+                plan_total=plan_total,
+                step_index=step_index,
+            )
+        return self._run_entity_prove(
+            entity,
+            levels,
+            continue_on_fail,
+            plan_total=plan_total,
+            step_index=step_index,
+        )
+
+    def _run_step(
+        self,
+        *,
+        entity: Entity,
+        level: str,
+        label: str,
+        plan_total: int,
+        step_index: int,
+        runner: Callable[[], list[CheckResult]],
+    ) -> tuple[list[CheckResult], int]:
+        current = step_index + 1
+        if self.progress is not None:
+            self.progress.step_start(
+                current,
+                plan_total,
+                entity=entity.name,
+                level=level,
+                label=label,
+            )
+        try:
+            batch = runner()
+        except Exception as exc:
+            if self.progress is not None:
+                self.progress.step_error(
+                    current,
+                    plan_total,
+                    entity=entity.name,
+                    level=level,
+                    label=label,
+                    error=exc,
+                )
+            raise
+        if self.progress is not None:
+            self.progress.step_finish(current, plan_total, batch)
+        return batch, current
 
     def _run_entity_prove(
-        self, entity: Entity, levels: list[str], continue_on_fail: bool
-    ) -> list[CheckResult]:
+        self,
+        entity: Entity,
+        levels: list[str],
+        continue_on_fail: bool,
+        *,
+        plan_total: int,
+        step_index: int,
+    ) -> "_EntityRun":
         assert self.source is not None and self.target is not None
         results: list[CheckResult] = []
         source_info = None
@@ -191,7 +306,7 @@ class ValidationEngine:
         except Exception:
             source_info = target_info = None
 
-        runners: dict[str, list] = {
+        runners: dict[str, Callable[[], list[CheckResult]]] = {
             "1": lambda: check_schema(entity, self.source, self.target),
             "probes": lambda: check_failure_probes(
                 entity, self.source, self.target, source_info, target_info
@@ -205,17 +320,30 @@ class ValidationEngine:
         for level in LEVEL_ORDER:
             if level not in levels or level == "observe":
                 continue
-            batch = runners[level]()
+            batch, step_index = self._run_step(
+                entity=entity,
+                level=level,
+                label=LEVEL_TITLES[level],
+                plan_total=plan_total,
+                step_index=step_index,
+                runner=runners[level],
+            )
             results.extend(batch)
             if not continue_on_fail and any(
                 item.status in {CheckStatus.FAIL, CheckStatus.ERROR} for item in batch
             ):
                 break
-        return results
+        return _EntityRun(results=results, next_step_index=step_index)
 
     def _run_entity_observe(
-        self, entity: Entity, levels: list[str], continue_on_fail: bool
-    ) -> list[CheckResult]:
+        self,
+        entity: Entity,
+        levels: list[str],
+        continue_on_fail: bool,
+        *,
+        plan_total: int,
+        step_index: int,
+    ) -> "_EntityRun":
         side: Literal["source", "target"] = (
             "source" if self.run_kind == "observe-source" else "target"
         )
@@ -225,32 +353,41 @@ class ValidationEngine:
         missing = "target" if side == "source" else "source"
 
         if "observe" in levels:
-            batch = [export_observation(entity, live, side, self.output_dir)]
+            batch, step_index = self._run_step(
+                entity=entity,
+                level="observe",
+                label=LEVEL_TITLES["observe"],
+                plan_total=plan_total,
+                step_index=step_index,
+                runner=lambda: [export_observation(entity, live, side, self.output_dir)],
+            )
             results.extend(batch)
             if not continue_on_fail and any(
                 item.status in {CheckStatus.FAIL, CheckStatus.ERROR} for item in batch
             ):
-                return results
+                return _EntityRun(results=results, next_step_index=step_index)
 
-        titles = {
-            "1": "Schema (skipped — observe)",
-            "probes": "Failure-mode probes (skipped — observe)",
-            "2": "Volume (skipped — observe)",
-            "3": "Metrics (skipped — observe)",
-            "4": "Transforms (skipped — observe)",
-            "hash": "Row hashes (skipped — observe)",
-        }
         for level in LEVEL_ORDER:
             if level not in levels or level in {"observe", "5"}:
                 continue
             if level in PAIRWISE_LEVELS:
-                results.append(skip_pairwise(entity, level, titles[level], missing))
+                batch, step_index = self._run_step(
+                    entity=entity,
+                    level=level,
+                    label=_OBSERVE_SKIP_TITLES[level],
+                    plan_total=plan_total,
+                    step_index=step_index,
+                    runner=lambda lvl=level: [
+                        skip_pairwise(entity, lvl, _OBSERVE_SKIP_TITLES[lvl], missing)
+                    ],
+                )
+                results.extend(batch)
 
         if "5" in levels:
-            if side == "target" and len(target_relations(entity)) == 1:
-                results.extend(check_invariants(entity, live))
-            else:
-                results.append(
+            def _invariants() -> list[CheckResult]:
+                if side == "target" and len(target_relations(entity)) == 1:
+                    return check_invariants(entity, live)
+                return [
                     CheckResult(
                         id=f"5.{entity.name}.observe_skip",
                         level="5",
@@ -263,5 +400,21 @@ class ValidationEngine:
                             "and a single target relation"
                         ),
                     )
-                )
-        return results
+                ]
+
+            batch, step_index = self._run_step(
+                entity=entity,
+                level="5",
+                label=LEVEL_TITLES["5"],
+                plan_total=plan_total,
+                step_index=step_index,
+                runner=_invariants,
+            )
+            results.extend(batch)
+        return _EntityRun(results=results, next_step_index=step_index)
+
+
+@dataclass
+class _EntityRun:
+    results: list[CheckResult]
+    next_step_index: int

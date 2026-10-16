@@ -9,6 +9,7 @@ from migrate_prove.demo.banking import seed_banking
 from migrate_prove.demo.cte_api import seed_cte_api
 from migrate_prove.demo.hops_vs_e2e import seed_hops_vs_e2e
 from migrate_prove.engine import ValidationEngine
+from migrate_prove.progress import ConsoleProgress
 from migrate_prove.reporting import print_console, write_html, write_json
 from migrate_prove.secrets import MissingEnvError, build_connector, describe_connection, load_env
 
@@ -80,6 +81,7 @@ def run(
         target,
         run=config.run,
         output_dir=output_dir,
+        progress=ConsoleProgress(),
     )
     report = engine.run(
         contract,
