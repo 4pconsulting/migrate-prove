@@ -165,7 +165,7 @@ fixtures/salesforce/
 
 ### Live Salesforce (`kind: salesforce`)
 
-Requires `pip install migrate-prove[salesforce]` (pulls `httpx`).
+Requires `pip install migrate-prove[salesforce]` (pulls `httpx`). Put the four vars in `.env` using stubs from [`.env.example`](.env.example).
 
 ```yaml
 target:
@@ -189,7 +189,7 @@ API version ≥ 51 uses `SELECT FIELDS(ALL)`; older versions select described fi
 
 ### Declarative HTTP (`kind: http`)
 
-Requires `pip install migrate-prove[http]`.
+Requires `pip install migrate-prove[http]`. Env var names belong in [`.env.example`](.env.example).
 
 ```yaml
 target:
@@ -199,11 +199,29 @@ target:
     type: bearer          # bearer | header | basic
     token: ${API_TOKEN}
   resources:
-    Account:
+    Account:              # must match entity target_table (or part table name)
       list_path: /v1/accounts
       schema_path: /v1/accounts/schema   # optional Salesforce-like {fields:[…]}
       records_jmespath: data
       next_jmespath: next
+  # buffer_rows: 5000
+  # max_rows: 100000
+```
+
+Auth variants:
+
+```yaml
+# API key header
+auth:
+  type: header
+  header_name: X-Api-Key
+  header_value: ${API_KEY}
+
+# HTTP basic
+auth:
+  type: basic
+  username: ${API_USER}
+  password: ${API_PASSWORD}
 ```
 
 `dialect_name()` is `http`; checks treat it like Salesforce for L5 SKIP paths. Rows are flat scalars only (nested objects/lists dropped). Pagination uses JMESPath for the record list and next-page URL.

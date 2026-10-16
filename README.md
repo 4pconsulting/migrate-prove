@@ -66,12 +66,14 @@ Each entity has `risk: critical | master | high_volume`. Critical failures are c
 
 ```powershell
 pip install migrate-prove
-pip install "migrate-prove[postgres]"
-pip install "migrate-prove[athena]"
-pip install "migrate-prove[excel]"
+pip install "migrate-prove[postgres]"     # psycopg
+pip install "migrate-prove[athena]"       # PyAthena SQLAlchemy dialect
+pip install "migrate-prove[excel]"        # openpyxl STM import
+pip install "migrate-prove[salesforce]"   # live Salesforce REST (httpx)
+pip install "migrate-prove[http]"         # declarative HTTP APIs (httpx + jmespath)
 ```
 
-`postgres` installs the psycopg driver, `athena` installs the PyAthena SQLAlchemy dialect, and `excel` installs openpyxl. The demos and their YAML live in this repository, so clone it and follow the quick start below to seed and run them.
+Extras are additive — install what your suite `kind` needs. Demos and their YAML live in this repository; clone it and follow the quick start below.
 
 ## Releasing
 
@@ -123,9 +125,28 @@ pytest
 
 ## Connections and secrets
 
-Suite YAML must **never** contain passwords. Reference environment variables with `${VAR}` or `${VAR:-default}`. Locally, copy [`.env.example`](.env.example) to `.env` (gitignored). In CI, set the same names from the pipeline secrets store — `python-dotenv` only fills gaps; real process env always wins.
+Suite YAML must **never** contain passwords. Reference environment variables with `${VAR}` or `${VAR:-default}`. Locally, copy [`.env.example`](.env.example) to `.env` (gitignored) — that file lists every supported secret/var pattern (Postgres, Athena, live Salesforce, HTTP). In CI, set the same names from the pipeline secrets store — `python-dotenv` only fills gaps; real process env always wins.
 
-**URL form** (any SQLAlchemy URL after expansion):
+Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints **redacted** connection labels.
+
+### Setup matrix
+
+| Situation | Suite `kind` / mode | Extra | Env vars (see `.env.example`) | Details |
+| --- | --- | --- | --- | --- |
+| Postgres / SQL URL | `sqlalchemy` (default) | `[postgres]` if needed | `SOURCE_URL` / `TARGET_URL` or structured `*_HOST`… | below |
+| Athena | `sqlalchemy` URL | `[athena]` | `AWS_*`, `ATHENA_*` | below |
+| SQLite demos | `url: sqlite:///…` | none | none | quick start |
+| Salesforce fixtures (CI) | `salesforce_mock` | none | none (`fixtures:` path) | [ADVANCED.md](ADVANCED.md) |
+| Live Salesforce | `salesforce` | `[salesforce]` | `SALESFORCE_URL`, `SALESFORCE_API_VERSION`, `SALESFORCE_CLIENT_ID`, `SALESFORCE_CLIENT_SECRET` | [ADVANCED.md](ADVANCED.md) |
+| Raw HTTP API | `http` | `[http]` | `API_BASE_URL`, `API_TOKEN` (or header/basic vars) | [ADVANCED.md](ADVANCED.md) |
+| Only one side reachable | `mode: observe` + `observe_side` | as for that side | same as live side | [ADVANCED.md](ADVANCED.md) |
+| Grain split across tables | entity `source_parts` / `target_parts` | — | — | [ADVANCED.md](ADVANCED.md) |
+
+Unsupported as live connectors today (record a blocker; do not invent `kind`): Excel/files, arbitrary undocumented APIs without an `http` resource map.
+
+### SQLAlchemy (default)
+
+**URL form:**
 
 ```yaml
 source:
@@ -134,7 +155,7 @@ target:
   url: "${TARGET_URL}"
 ```
 
-**Structured form** (builds the URL; same `${}` rules):
+**Structured form:**
 
 ```yaml
 source:
@@ -148,13 +169,6 @@ source:
     sslmode: require
 ```
 
-Install drivers as extras when needed:
-
-```powershell
-pip install -e ".[postgres]"   # psycopg
-pip install -e ".[athena]"     # PyAthena SQLAlchemy dialect
-```
-
 Athena stays URL-shaped; AWS credentials come from the environment or the runner IAM role:
 
 ```yaml
@@ -162,17 +176,15 @@ target:
   url: "awsathena+rest://athena.${AWS_REGION}.amazonaws.com:443/${ATHENA_SCHEMA}?s3_staging_dir=${ATHENA_S3_STAGING}&work_group=${ATHENA_WORKGROUP}"
 ```
 
-Optional: `migrate-prove run suite.yaml --env-file path\to\.env`. The CLI prints **redacted** connection labels (SQLAlchemy URLs, `salesforce_mock://…`, `salesforce://…`, or `http://…`).
-
-**API targets** (see [ADVANCED.md](ADVANCED.md)):
+### API targets
 
 ```yaml
-# CI-safe mock
+# CI-safe mock — no secrets
 target:
   kind: salesforce_mock
   fixtures: fixtures/salesforce
 
-# Live Salesforce — pip install migrate-prove[salesforce]
+# Live Salesforce — pip install "migrate-prove[salesforce]"
 target:
   kind: salesforce
   url: ${SALESFORCE_URL}
@@ -180,17 +192,40 @@ target:
   client_id: ${SALESFORCE_CLIENT_ID}
   client_secret: ${SALESFORCE_CLIENT_SECRET}
 
-# Declarative HTTP — pip install migrate-prove[http]
+# Declarative HTTP — pip install "migrate-prove[http]"
 target:
   kind: http
   base_url: ${API_BASE_URL}
-  auth: { type: bearer, token: ${API_TOKEN} }
+  auth:
+    type: bearer                    # bearer | header | basic
+    token: ${API_TOKEN}
+    # header_name: X-Api-Key
+    # header_value: ${API_KEY}
+    # username: ${API_USER}
+    # password: ${API_PASSWORD}
   resources:
-    Account:
+    Account:                        # key = target_table / object name
       list_path: /v1/accounts
+      schema_path: /v1/accounts/schema   # optional
       records_jmespath: data
       next_jmespath: next
 ```
+
+### Observe mode (one-sided)
+
+When the other database/API is unreachable, export the live side for manual reconciliation:
+
+```yaml
+mode: observe
+observe_side: target          # or source
+target:
+  kind: salesforce
+  url: ${SALESFORCE_URL}
+  # …
+# omit source when observing target
+```
+
+Or: `migrate-prove run suite.yaml --observe target`. Pairwise checks SKIP; rows land under `artifacts/observe/`.
 
 ## Authoring a contract
 
