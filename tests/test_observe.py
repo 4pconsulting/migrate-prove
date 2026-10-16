@@ -126,6 +126,10 @@ def test_observe_target_exports_and_skips_pairwise(tmp_path: Path):
     assert statuses["hash"] == CheckStatus.SKIP
     observe = next(item for item in report.results if item.level == "observe")
     assert observe.status == CheckStatus.PASS
+    assert observe.evidence.get("sample")
+    assert observe.actual["row_count"] == 2
+    assert "row_count=2" in observe.message
+    assert "sample=" in observe.message
 
 
 def test_observe_source_skips_invariants(tmp_path: Path):

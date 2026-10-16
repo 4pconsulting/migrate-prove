@@ -31,25 +31,32 @@ def _report(*results: CheckResult) -> RunReport:
     )
 
 
-def test_pass_row_has_no_details(tmp_path: Path):
+def test_pass_row_with_evidence_is_expandable(tmp_path: Path):
     report = _report(
         CheckResult(
-            id="L1.accounts.columns",
-            level="1",
-            title="Mapped columns exist",
+            id="L2.accounts.volume.total",
+            level="2",
+            title="Total row count",
             entity="accounts",
             concern=Concern.migration,
             status=CheckStatus.PASS,
-            message="All mapped columns are present",
-            expected={"source_missing": [], "target_missing": []},
-            actual={"source_missing": [], "target_missing": []},
+            message="COUNT(*) source=12, target=12 — totals match",
+            expected=12,
+            actual=12,
+            variance=0,
+            evidence={
+                "output": {"source": 12, "target": 12},
+                "sample": [{"source": 12, "target": 12, "variance": 0}],
+            },
         )
     )
     path = tmp_path / "report.html"
     write_html(report, _contract(), path)
     html = path.read_text(encoding="utf-8")
-    assert "<details" not in html
-    assert "All mapped columns are present" in html
+    assert '<details class="result pass-row">' in html
+    assert "Query output" in html
+    assert ">Sample<" in html
+    assert "COUNT(*) source=12, target=12" in html
     assert ">Message<" in html
 
 

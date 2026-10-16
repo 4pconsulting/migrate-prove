@@ -102,12 +102,25 @@ class RunReport:
         exports: list[dict[str, Any]] = []
         for item in self.results:
             if item.level == "observe" and item.status == CheckStatus.PASS:
+                actual = item.actual
+                if isinstance(actual, dict):
+                    row_count = actual.get("row_count")
+                else:
+                    row_count = actual
+                if row_count is None:
+                    row_count = item.evidence.get("row_count")
                 exports.append(
                     {
                         "entity": item.entity,
                         "path": item.evidence.get("path"),
                         "meta": item.evidence.get("meta"),
-                        "row_count": item.actual,
+                        "row_count": row_count,
+                        "sample": (
+                            actual.get("sample")
+                            if isinstance(actual, dict)
+                            else None
+                        )
+                        or (item.evidence.get("sample") or [None])[0],
                         "message": item.message,
                     }
                 )

@@ -8,7 +8,6 @@ from migrate_prove.engine import LEVEL_TITLES, RunReport
 from migrate_prove.models import CheckResult, CheckStatus, Contract
 
 _SLICE_DISPLAY_CAP = 50
-_EXPANDABLE = {CheckStatus.FAIL, CheckStatus.ERROR, CheckStatus.WARN}
 
 _STATUS_TONE = {
     CheckStatus.PASS: "#0f7b4c",
@@ -180,7 +179,7 @@ def write_html(report: RunReport, contract: Contract, path: Path) -> None:
     </div>
     {body_rows}
   </div>
-  <p class="muted">A green ETL exit code is not this report. This report is the oracle: target = STM(source). Expand failed rows for expected/actual values and evidence samples.</p>
+  <p class="muted">A green ETL exit code is not this report. This report is the oracle: target = STM(source). Expand any row (pass or fail) for query outputs, expected/actual values, and evidence samples.</p>
 </body>
 </html>
 """
@@ -198,7 +197,8 @@ def _render_result_row(item: CheckResult) -> str:
         f"<span>{_esc(item.concern.value)}</span>"
         f"<span>{_esc(item.message)}</span>"
     )
-    expandable = item.status in _EXPANDABLE and _has_detail(item)
+    # Passes need evidence too — otherwise green rows cannot be trusted or debugged.
+    expandable = item.status != CheckStatus.SKIP and _has_detail(item)
     if not expandable:
         return f'<div class="row-plain">{cells}</div>'
     status_class = f"{item.status.value.lower()}-row"
@@ -215,20 +215,19 @@ def _has_detail(item: CheckResult) -> bool:
     if item.expected is not None or item.actual is not None or item.variance is not None:
         return True
     evidence = item.evidence or {}
-    if evidence.get("sample"):
-        return True
-    if evidence.get("slices"):
-        return True
-    if evidence.get("sql"):
-        return True
-    if evidence.get("fields"):
-        return True
-    if evidence.get("columns"):
-        return True
-    if evidence.get("mode") is not None:
-        return True
-    if evidence.get("evaluated") is not None:
-        return True
+    for key in (
+        "sample",
+        "slices",
+        "sql",
+        "fields",
+        "columns",
+        "mode",
+        "evaluated",
+        "output",
+        "path",
+    ):
+        if evidence.get(key) is not None:
+            return True
     return False
 
 
@@ -242,9 +241,15 @@ def _render_detail_panel(item: CheckResult) -> str:
     if not isinstance(evidence, dict):
         evidence = {}
 
+    output = evidence.get("output")
+    if output is not None:
+        parts.append("<h3>Query output</h3>")
+        parts.append(_fmt_value(output))
+
     sample = evidence.get("sample")
     if isinstance(sample, list) and sample:
-        parts.append("<h3>Sample mismatches</h3>")
+        heading = "Sample mismatches" if item.status == CheckStatus.FAIL else "Sample"
+        parts.append(f"<h3>{heading}</h3>")
         parts.append(_render_sample_table(sample))
 
     slices = evidence.get("slices")
@@ -261,6 +266,11 @@ def _render_detail_panel(item: CheckResult) -> str:
         cols = evidence["columns"]
         parts.append("<h3>Columns</h3>")
         parts.append(f"<p>{_esc(', '.join(str(c) for c in cols))}</p>")
+
+    if evidence.get("path"):
+        parts.append(
+            f"<p><span class='muted'>Export:</span> {_esc(str(evidence['path']))}</p>"
+        )
 
     if evidence.get("mode") is not None:
         parts.append(f"<p><span class='muted'>Mode:</span> {_esc(str(evidence['mode']))}</p>")

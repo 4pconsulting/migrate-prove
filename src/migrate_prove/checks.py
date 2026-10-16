@@ -33,6 +33,30 @@ def _slice_label(key: tuple) -> str:
     return "|".join("" if part is None else str(part) for part in key)
 
 
+def _evidence_value(value: Any) -> Any:
+    """Coerce query/row values into JSON-friendly evidence."""
+    if isinstance(value, dict):
+        return {str(k): _evidence_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_evidence_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, Decimal):
+        return str(value)
+    return str(value)
+
+
+def _sample_one(items: list[Any], *, prefer=None) -> list[Any]:
+    """Keep a single evidence row for multi-row results (prefer mismatches when given)."""
+    if not items:
+        return []
+    if prefer is not None:
+        for item in items:
+            if prefer(item):
+                return [_evidence_value(item)]
+    return [_evidence_value(items[0])]
+
+
 def _ok(
     *,
     id: str,
@@ -174,6 +198,7 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
     tgt = target_relations(entity)
     source_count = count_concat(source, src, entity.filter_source)
     target_count = count_concat(target, tgt, entity.filter_target)
+    matched = source_count == target_count
     results = [
         _ok(
             id=f"L2.{entity.name}.volume.total",
@@ -181,14 +206,27 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
             title="Total row count",
             entity=entity.name,
             concern=Concern.migration,
-            status=CheckStatus.PASS if source_count == target_count else CheckStatus.FAIL,
+            status=CheckStatus.PASS if matched else CheckStatus.FAIL,
             expected=source_count,
             actual=target_count,
             variance=target_count - source_count,
+            evidence={
+                "output": {"source": source_count, "target": target_count},
+                "sample": [
+                    {
+                        "source": source_count,
+                        "target": target_count,
+                        "variance": target_count - source_count,
+                    }
+                ],
+            },
             message=(
-                "Totals match — this can still mask sliced defects"
-                if source_count == target_count
-                else "Source and target totals differ"
+                f"COUNT(*) source={source_count}, target={target_count}"
+                + (
+                    " — totals match (can still mask sliced defects)"
+                    if matched
+                    else " — totals differ"
+                )
             ),
         )
     ]
@@ -226,6 +264,7 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
                 }
             )
         label = ",".join(dimensions)
+        sample = _sample_one(slices, prefer=lambda row: row.get("variance") not in (0, 0.0, None))
         results.append(
             _ok(
                 id=f"L2.{entity.name}.volume.by_{label}",
@@ -236,11 +275,18 @@ def check_volume(entity: Entity, source: Connector, target: Connector) -> list[C
                 status=CheckStatus.FAIL if failed else CheckStatus.PASS,
                 expected={_slice_label(key): source_map[key] for key in source_map},
                 actual={_slice_label(key): target_map[key] for key in target_map},
-                evidence={"slices": slices},
+                evidence={
+                    "output": {"source_groups": len(source_map), "target_groups": len(target_map)},
+                    "slices": slices,
+                    "sample": sample,
+                },
                 message=(
-                    "Segmented counts differ — a matching total would have hidden this"
-                    if failed
-                    else "Segmented counts match the contract mapping"
+                    f"GROUP BY {label}: {len(slices)} slice(s); sample={sample[0] if sample else None}"
+                    + (
+                        " — segmented counts differ"
+                        if failed
+                        else " — segmented counts match"
+                    )
                 ),
             )
         )
@@ -296,6 +342,15 @@ def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[
                         "variance": actual - expected,
                     }
                 )
+            sample = _sample_one(
+                slices,
+                prefer=lambda row: not _within_tolerance(
+                    float(row["source"]),
+                    float(row["target"]),
+                    metric.tolerance_abs,
+                    metric.tolerance_pct,
+                ),
+            )
             results.append(
                 _ok(
                     id=f"L3.{entity.name}.metric.{metric.name}",
@@ -304,8 +359,22 @@ def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[
                     entity=entity.name,
                     concern=Concern.reconciliation,
                     status=CheckStatus.FAIL if failed else CheckStatus.PASS,
-                    evidence={"slices": slices},
-                    message="Dimensional metric mismatch" if failed else "Dimensional metrics match",
+                    expected={_slice_label(key): source_rows[key] for key in source_rows},
+                    actual={_slice_label(key): target_rows[key] for key in target_rows},
+                    evidence={
+                        "output": {
+                            "source_sql": metric.source_sql,
+                            "target_sql": metric.target_sql,
+                            "group_by": metric.group_by,
+                        },
+                        "slices": slices,
+                        "sample": sample,
+                    },
+                    message=(
+                        f"{metric.source_sql} vs {metric.target_sql}; "
+                        f"{len(slices)} group(s); sample={sample[0] if sample else None}"
+                        + (" — mismatch" if failed else " — within tolerance")
+                    ),
                 )
             )
             continue
@@ -326,7 +395,19 @@ def check_metrics(entity: Entity, source: Connector, target: Connector) -> list[
                 expected=expected,
                 actual=actual,
                 variance=actual - expected,
-                message="Aggregate matches within tolerance" if ok else "Aggregate outside tolerance",
+                evidence={
+                    "output": {
+                        "source": expected,
+                        "target": actual,
+                        "source_sql": metric.source_sql,
+                        "target_sql": metric.target_sql,
+                    },
+                    "sample": [{"source": expected, "target": actual, "variance": actual - expected}],
+                },
+                message=(
+                    f"{metric.source_sql}={expected}, {metric.target_sql}={actual}"
+                    + (" — within tolerance" if ok else " — outside tolerance")
+                ),
             )
         )
     return results
@@ -348,6 +429,7 @@ def check_transforms(entity: Entity, source: Connector, target: Connector) -> li
         entity.business_key,
     )
     mismatches: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    matches: dict[str, list[dict[str, Any]]] = defaultdict(list)
     evaluated = 0
     for source_row in source_rows:
         mapped_key = tuple(
@@ -364,14 +446,15 @@ def check_transforms(entity: Entity, source: Connector, target: Connector) -> li
                 continue
             actual = target_row.get(mapping.target)
             wanted = expected[mapping.target]
+            sample_row = {
+                "key": dict(zip(entity.business_key, mapped_key, strict=True)),
+                "expected": wanted,
+                "actual": actual,
+            }
             if canonicalize(wanted, mapping.normalize) != canonicalize(actual, mapping.normalize):
-                mismatches[mapping.target].append(
-                    {
-                        "key": dict(zip(entity.business_key, mapped_key, strict=True)),
-                        "expected": wanted,
-                        "actual": actual,
-                    }
-                )
+                mismatches[mapping.target].append(sample_row)
+            elif len(matches[mapping.target]) < 1:
+                matches[mapping.target].append(sample_row)
 
     results: list[CheckResult] = []
     transform_fields = [
@@ -383,6 +466,7 @@ def check_transforms(entity: Entity, source: Connector, target: Connector) -> li
         transform_fields = [m for m in entity.mappings if m.kind != MappingKind.surrogate]
     for mapping in transform_fields:
         misses = mismatches.get(mapping.target, [])
+        sample = (_sample_one(misses) if misses else _sample_one(matches.get(mapping.target, [])))
         results.append(
             _ok(
                 id=f"L4.{entity.name}.transform.{mapping.target}",
@@ -394,11 +478,11 @@ def check_transforms(entity: Entity, source: Connector, target: Connector) -> li
                 expected=0,
                 actual=len(misses),
                 variance=len(misses),
-                evidence={"sample": misses[:20], "evaluated": evaluated},
+                evidence={"sample": sample, "evaluated": evaluated, "mismatch_count": len(misses)},
                 message=(
-                    f"{len(misses)} row(s) do not match the STM rule"
+                    f"{len(misses)}/{evaluated} row(s) mismatch; sample={sample[0] if sample else None}"
                     if misses
-                    else "Target values match the STM rule engine"
+                    else f"{evaluated} row(s) match STM; sample={sample[0] if sample else None}"
                 ),
             )
         )
@@ -416,6 +500,7 @@ def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> li
     missing: list[Any] = []
     extras: list[Any] = []
     hash_misses: list[dict[str, Any]] = []
+    hash_matches: list[dict[str, Any]] = []
 
     for source_row in source_rows:
         mapped_key = tuple(
@@ -432,17 +517,24 @@ def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> li
         specs = [mapping.normalize for mapping in hash_fields]
         expected_hash = row_signature(expected_values, specs)
         actual_hash = row_signature(actual_values, specs)
+        sample_row = {
+            "key": dict(zip(entity.business_key, mapped_key, strict=True)),
+            "source_hash": expected_hash,
+            "target_hash": actual_hash,
+        }
         if expected_hash != actual_hash:
-            hash_misses.append(
-                {
-                    "key": dict(zip(entity.business_key, mapped_key, strict=True)),
-                    "source_hash": expected_hash,
-                    "target_hash": actual_hash,
-                }
-            )
+            hash_misses.append(sample_row)
+        elif len(hash_matches) < 1:
+            hash_matches.append(sample_row)
 
     target_keys = set(target_rows)
     extras = [dict(zip(entity.business_key, key, strict=True)) for key in sorted(target_keys - source_keys, key=str)]
+    present_sample = _sample_one(
+        [
+            dict(zip(entity.business_key, key, strict=True))
+            for key in sorted(source_keys & target_keys, key=str)[:1]
+        ]
+    )
 
     return [
         _ok(
@@ -454,8 +546,15 @@ def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> li
             status=CheckStatus.FAIL if missing else CheckStatus.PASS,
             expected=0,
             actual=len(missing),
-            evidence={"sample": missing[:20]},
-            message="Transport loss" if missing else "No missing keys",
+            evidence={
+                "sample": _sample_one(missing) if missing else present_sample,
+                "output": {"missing": len(missing), "source_keys": len(source_keys)},
+            },
+            message=(
+                f"{len(missing)} missing key(s); sample={_sample_one(missing)[0] if missing else None}"
+                if missing
+                else f"0 missing of {len(source_keys)} source key(s); sample={present_sample[0] if present_sample else None}"
+            ),
         ),
         _ok(
             id=f"HASH.{entity.name}.keys.extra",
@@ -466,8 +565,15 @@ def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> li
             status=CheckStatus.FAIL if extras else CheckStatus.PASS,
             expected=0,
             actual=len(extras),
-            evidence={"sample": extras[:20]},
-            message="Unexpected extras in target" if extras else "No extra keys",
+            evidence={
+                "sample": _sample_one(extras) if extras else present_sample,
+                "output": {"extra": len(extras), "target_keys": len(target_keys)},
+            },
+            message=(
+                f"{len(extras)} extra key(s); sample={_sample_one(extras)[0] if extras else None}"
+                if extras
+                else f"0 extras of {len(target_keys)} target key(s); sample={present_sample[0] if present_sample else None}"
+            ),
         ),
         _ok(
             id=f"HASH.{entity.name}.row_signature",
@@ -478,11 +584,17 @@ def check_row_hashes(entity: Entity, source: Connector, target: Connector) -> li
             status=CheckStatus.FAIL if hash_misses else CheckStatus.PASS,
             expected=0,
             actual=len(hash_misses),
-            evidence={"sample": hash_misses[:20], "fields": [m.target for m in hash_fields]},
+            evidence={
+                "sample": _sample_one(hash_misses) if hash_misses else _sample_one(hash_matches),
+                "fields": [m.target for m in hash_fields],
+                "output": {"mismatches": len(hash_misses), "matched": len(source_keys) - len(missing) - len(hash_misses)},
+            },
             message=(
-                f"{len(hash_misses)} hashed row(s) differ after STM normalisation"
+                f"{len(hash_misses)} hashed row(s) differ; sample={_sample_one(hash_misses)[0] if hash_misses else None}"
                 if hash_misses
-                else "Row signatures match"
+                else (
+                    f"Row signatures match; sample={_sample_one(hash_matches)[0] if hash_matches else None}"
+                )
             ),
         ),
     ]
@@ -577,6 +689,11 @@ def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
 
         numeric = 0 if numeric is None else numeric
         status = CheckStatus.PASS if numeric == invariant.expect else CheckStatus.FAIL
+        evidence = {
+            **evidence,
+            "output": {"actual": numeric, "expect": invariant.expect},
+            "sample": [{"actual": numeric, "expect": invariant.expect}],
+        }
         results.append(
             _ok(
                 id=f"L5.{entity.name}.invariant.{invariant.name}",
@@ -588,7 +705,14 @@ def check_invariants(entity: Entity, target: Connector) -> list[CheckResult]:
                 expected=invariant.expect,
                 actual=numeric,
                 variance=None if not isinstance(numeric, (int, float)) else numeric - invariant.expect,
-                message="Target remains internally consistent" if status == CheckStatus.PASS else "Business invariant broken",
+                message=(
+                    f"actual={numeric}, expect={invariant.expect}"
+                    + (
+                        " — target remains internally consistent"
+                        if status == CheckStatus.PASS
+                        else " — business invariant broken"
+                    )
+                ),
                 evidence=evidence,
             )
         )

@@ -20,7 +20,12 @@ def test_demo_surfaces_masked_volume_and_invariants(tmp_path: Path):
     by_id = {item.id: item for item in report.results}
 
     assert by_id["L2.customers.volume.total"].status == CheckStatus.PASS
+    assert by_id["L2.customers.volume.total"].evidence.get("output")
+    assert by_id["L2.customers.volume.total"].evidence.get("sample")
+    assert "COUNT(*)" in by_id["L2.customers.volume.total"].message
     assert by_id["L2.customers.volume.by_status"].status == CheckStatus.FAIL
+    assert by_id["L2.customers.volume.by_status"].evidence.get("sample")
+    assert len(by_id["L2.customers.volume.by_status"].evidence["sample"]) == 1
     assert by_id["L5.customers.invariant.temporal_integrity"].status == CheckStatus.FAIL
     assert by_id["L5.order_items.invariant.no_orphan_items"].status == CheckStatus.FAIL
     assert by_id["L4.customers.transform.status"].status == CheckStatus.FAIL
